@@ -471,43 +471,170 @@ class Renderer {
         ctx.drawImage(sp, x - sr, y - sr, sr * 2, sr * 2);
       } else {
         drawBallForm(ctx, x, y, r, b.form, b.color, Math.atan2(b.vy, b.vx));
+        if (b.pierce > 0 && n < 900) {
+          ctx.globalAlpha = 0.65;
+          ctx.strokeStyle = '#e4faff';
+          ctx.lineWidth = Math.max(0.8, r * 0.12);
+          ctx.beginPath();
+          ctx.arc(x, y, r * 1.5, -Math.PI / 2,
+            -Math.PI / 2 + TAU * b.pierce / Math.max(b.pierce, b.pierceCap || 0));
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+        }
       }
     }
   }
 
   /* ------------------------------------------------------------------ fx */
 
+  statusSprite(mask, variant, phase) {
+    if (!this.statusSprites) this.statusSprites = new Map();
+    const key = mask + ':' + variant + ':' + ((mask & 4) ? phase : 0);
+    if (this.statusSprites.has(key)) return this.statusSprites.get(key);
+    const sprite = document.createElement('canvas');
+    sprite.width = sprite.height = 64;
+    const g = sprite.getContext('2d');
+    if (mask & 1) {
+      const ice = g.createLinearGradient(6, 6, 58, 58);
+      ice.addColorStop(0, 'rgba(207,249,255,0.5)');
+      ice.addColorStop(0.5, 'rgba(117,210,239,0.18)');
+      ice.addColorStop(1, 'rgba(175,232,255,0.42)');
+      g.fillStyle = ice;
+      g.fillRect(6, 6, 52, 52);
+      g.strokeStyle = 'rgba(224,253,255,0.85)';
+      g.lineWidth = 1.5;
+      g.strokeRect(7, 7, 50, 50);
+      const cx = 24 + variant * 4, cy = 26 + (variant & 1) * 10;
+      g.beginPath();
+      g.moveTo(8, 8); g.lineTo(cx, cy); g.lineTo(56, 8);
+      g.moveTo(cx, cy); g.lineTo(13, 56);
+      g.moveTo(cx, cy); g.lineTo(55, 50);
+      g.strokeStyle = 'rgba(225,255,255,0.42)';
+      g.lineWidth = 0.8;
+      g.stroke();
+      g.beginPath();
+      g.moveTo(8, 8); g.lineTo(cx, cy); g.lineTo(8, 36);
+      g.closePath();
+      g.fillStyle = 'rgba(240,255,255,0.16)';
+      g.fill();
+      // Frozen corners catch the light without obscuring the HP colour.
+      g.fillStyle = '#e0fbff';
+      g.fillRect(7, 7, 6, 2); g.fillRect(7, 7, 2, 6);
+      g.fillRect(51, 55, 6, 2); g.fillRect(55, 51, 2, 6);
+    }
+    if (mask & 2) {
+      const shift = variant * 2;
+      const crack = () => {
+        g.beginPath();
+        g.moveTo(20 + shift, 8); g.lineTo(34, 24); g.lineTo(26 + shift, 34);
+        g.lineTo(39, 48); g.lineTo(36, 57);
+        g.moveTo(26 + shift, 34); g.lineTo(10, 42);
+        g.moveTo(34, 24); g.lineTo(50, 18);
+      };
+      crack(); g.strokeStyle = 'rgba(40,25,15,0.8)'; g.lineWidth = 5; g.stroke();
+      crack(); g.strokeStyle = 'rgba(247,170,76,0.75)'; g.lineWidth = 2.3; g.stroke();
+      crack(); g.strokeStyle = 'rgba(255,229,170,0.9)'; g.lineWidth = 0.8; g.stroke();
+    }
+    if (mask & 4) {
+      const glow = g.createRadialGradient(32, 32, 14, 32, 32, 37);
+      glow.addColorStop(0, 'rgba(195,128,255,0)');
+      glow.addColorStop(0.65, 'rgba(202,153,255,0.16)');
+      glow.addColorStop(1, 'rgba(202,153,255,0)');
+      g.fillStyle = glow;
+      g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = 'rgba(220,181,255,0.75)';
+      g.lineWidth = 1.3;
+      g.strokeRect(5.5, 5.5, 53, 53);
+      const dx = variant * 3 - 4;
+      const bolt = () => {
+        g.beginPath();
+        g.moveTo(37 + dx, 14); g.lineTo(24 + dx, 32);
+        g.lineTo(36 + dx, 29); g.lineTo(26 + dx, 49);
+        g.moveTo(phase ? 8 : 53, 18);
+        g.lineTo(phase ? 15 : 48, 25); g.lineTo(phase ? 10 : 54, 32);
+      };
+      bolt(); g.strokeStyle = 'rgba(176,100,255,0.5)'; g.lineWidth = 5; g.stroke();
+      bolt(); g.strokeStyle = 'rgba(247,233,255,0.95)'; g.lineWidth = 1.6; g.stroke();
+      g.fillStyle = '#f6e5ff';
+      g.fillRect(phase ? 7 : 53, 7, 3, 3);
+      g.fillRect(phase ? 53 : 7, 54, 3, 3);
+    }
+    this.statusSprites.set(key, sprite);
+    return sprite;
+  }
+
   drawCoatings(reactions, cam) {
     if (!reactions) return;
     const ctx = this.ctx, w = reactions.world, time = reactions.time;
     const size = CFG.PIXEL * cam.zoom;
+    const quality = this.quality;
+    const richBudget = quality >= 2 ? 900 : quality === 1 ? 450 : 0;
+    const maxVisible = quality >= 2 ? 2200 : quality === 1 ? 1200 : 600;
+    const phase = Math.floor(time * 5) & 1;
+    const flatColors = ['', '#a2e5f7', '#edb477', '#c4dda7', '#d0a4f4', '#bdd8ff', '#e9b5d9', '#dddafa'];
+    let visible = 0;
     for (const [i, s] of reactions.cells) {
       if (!w.visible[i] || !w.health[i]) continue;
       const x = cam.worldToScreenX((i % w.n) * CFG.PIXEL);
       const y = cam.worldToScreenY(Math.floor(i / w.n) * CFG.PIXEL);
       if (x < -size || x > this.w || y < -size || y > this.h) continue;
-      if (s.frozen > time) {
-        ctx.fillStyle = 'rgba(125,211,252,0.55)';
-        ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
-        ctx.strokeStyle = '#c5f5ff';
-        ctx.lineWidth = Math.max(1, cam.zoom);
-        ctx.strokeRect(x + 2, y + 2, Math.max(1, size - 4), Math.max(1, size - 4));
+      const mask = Number(s.frozen > time) | (Number(s.fault > time) << 1) | (Number(s.charged > time) << 2);
+      if (!mask) continue;
+      if (++visible > maxVisible) break;
+      if (size < 12 || visible > richBudget) {
+        ctx.globalAlpha = 0.38;
+        ctx.fillStyle = flatColors[mask];
+        ctx.fillRect(x, y, Math.max(1, size - 0.5), Math.max(1, size - 0.5));
+        continue;
       }
-      if (s.fault > time) {
-        ctx.strokeStyle = '#fbbf24';
-        ctx.lineWidth = Math.max(1, size * 0.06);
-        ctx.beginPath();
-        ctx.moveTo(x + size * 0.3, y + size * 0.1);
-        ctx.lineTo(x + size * 0.6, y + size * 0.45);
-        ctx.lineTo(x + size * 0.4, y + size * 0.65);
-        ctx.lineTo(x + size * 0.7, y + size * 0.9);
-        ctx.stroke();
-      }
-      if (s.charged > time) {
-        ctx.fillStyle = '#e9b6ff';
-        ctx.fillRect(x + size * 0.6, y + size * 0.15, Math.max(2, size * 0.18), Math.max(2, size * 0.18));
-      }
+      const born = Math.max(mask & 1 ? s.frozenAt ?? -1 : -1, mask & 2 ? s.faultAt ?? -1 : -1, mask & 4 ? s.chargedAt ?? -1 : -1);
+      const remaining = Math.max(s.frozen, s.fault, s.charged) - time;
+      ctx.globalAlpha = (0.65 + 0.35 * Math.min(1, (time - born) / 0.18)) *
+        (0.55 + 0.45 * Math.min(1, remaining / 0.6));
+      ctx.drawImage(this.statusSprite(mask, i & 3, phase ^ (i & 1)),
+        x - size * 0.115, y - size * 0.115, size * 1.23, size * 1.23);
     }
+    ctx.globalAlpha = 1;
+  }
+
+  drawStatusImpacts(fx, cam) {
+    const ctx = this.ctx;
+    for (const link of fx.links || []) {
+      const ax = cam.worldToScreenX(link.ax), ay = cam.worldToScreenY(link.ay);
+      const bx = cam.worldToScreenX(link.bx), by = cam.worldToScreenY(link.by);
+      ctx.globalAlpha = link.life / link.maxLife * 0.6;
+      ctx.strokeStyle = link.color;
+      ctx.lineWidth = Math.max(1.5, 4 * cam.zoom);
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.lineTo(cam.worldToScreenX(link.mx), cam.worldToScreenY(link.my));
+      ctx.lineTo(bx, by);
+      ctx.stroke();
+      ctx.strokeStyle = '#f4e9ff';
+      ctx.lineWidth = Math.max(0.7, cam.zoom);
+      ctx.stroke();
+    }
+    for (const hit of fx.impacts || []) {
+      const x = cam.worldToScreenX(hit.x), y = cam.worldToScreenY(hit.y);
+      if (x < -100 || x > this.w + 100 || y < -100 || y > this.h + 100) continue;
+      const fade = hit.life / hit.maxLife, age = 1 - fade;
+      const radius = CFG.PIXEL * cam.zoom * (0.3 + age * 0.6);
+      ctx.globalAlpha = fade * 0.65;
+      const ice = hit.kind === 'frozen' || hit.kind === 'shatter';
+      ctx.strokeStyle = ice ? '#d9faff' : hit.kind === 'fault' ? '#ffd59a' : hit.kind === 'pierce' ? '#c9f4ff' : '#e9caff';
+      ctx.lineWidth = Math.max(0.8, cam.zoom * fade * 1.8);
+      ctx.beginPath();
+      if (hit.kind === 'shatter' || hit.kind === 'discharge') {
+        for (let j = 0; j < 6; j++) {
+          const angle = j * TAU / 6;
+          const dx = Math.cos(angle), dy = Math.sin(angle);
+          ctx.moveTo(x + dx * radius * 0.65, y + dy * radius * 0.65);
+          ctx.lineTo(x + dx * radius, y + dy * radius);
+        }
+      } else ctx.arc(x, y, radius * (hit.kind === 'pierce' ? 0.5 : 0.8), 0, TAU);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
   }
 
   drawParticles(fx, cam) {
@@ -831,6 +958,7 @@ class Renderer {
     this.drawParticles(game.fx, cam);
     this.drawBalls(game.balls.list, cam);
     this.drawWaves(game.fx, cam);
+    this.drawStatusImpacts(game.fx, cam);
     this.drawAim(game, cam);
     this.drawTexts(game.fx, cam);
 

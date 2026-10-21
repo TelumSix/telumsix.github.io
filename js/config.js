@@ -29,18 +29,32 @@ CFG.CHUNK_WORLD = CFG.CHUNK * CFG.PIXEL;
 CFG.MINI_CELLS = CFG.MINI * CFG.MINI;
 CFG.HEALTH_STRIDE = CFG.MAX_HEALTH + 1;
 
-/**
- * Launch pricing is a demand surcharge rather than a runaway multiplier.
- * Every launch adds one unit of demand; demand cools while that ball rests,
- * so rapid fire gets expensive but the price always settles back to base.
- * At the cap the ball costs 1 + cap * perUnit times its base price.
- */
+/** Demand cools; fleet investment is permanent and grows faster than income. */
 const PRICING = {
   gain: 1,
-  coolPerSec: 0.6,
-  cap: 8,
-  perUnit: 0.2,
+  coolPerSec: 0.35,
+  cap: 6,
+  perUnit: 0.3,
+  ownGrowth: 0.065,
+  fleetGrowth: 0.025,
+  fleetScale: 70,
+  fleetExponent: 0.8,
 };
+const ECONOMY = { startingCurrency: 150 };
+
+function pixelReward(maxHealth, yieldMult = 1, bounty = 0) {
+  return Math.max(1, Math.round((2 + Math.sqrt(Math.max(1, maxHealth))) * yieldMult) + bounty);
+}
+
+function restoreLaunchCounts(saved, legacyShots = 0) {
+  const counts = Object.create(null);
+  const legacy = Math.min(1e8, Math.max(0, Math.floor(Number(legacyShots) || 0)));
+  BALL_TYPES.forEach((def, i) => {
+    const value = saved && typeof saved === 'object' ? Number(saved[def.id]) : Math.floor(legacy / 3) + (i < legacy % 3 ? 1 : 0);
+    counts[def.id] = Number.isFinite(value) ? Math.min(1e8, Math.max(0, Math.floor(value))) : 0;
+  });
+  return counts;
+}
 
 /** Undamaged stone/soil hides its strength; damaged colour uses absolute HP. */
 const FRESH_GREY = [138, 150, 168];
@@ -82,17 +96,18 @@ const SHARD_CSS = '#ffd166';
 // Stable IDs preserve selected balls and existing field saves.
 const TECH_VERSION = 2;
 const BALL_TYPES = [
-  { id: 'arc', name: 'Rime', cost: 12, cooldown: 0.45, damage: 1, speed: 300, radius: 5, color: '#7dd3fc',
+  { id: 'arc', name: 'Rime', cost: 24, cooldown: 0.55, damage: 1, speed: 300, radius: 5, color: '#7dd3fc',
     short: 'frost / crystal', desc: 'A quiet frost seed. Every fourth hit freezes a surviving pixel for 4 seconds. Grow into a Glacier or a piercing Hail core.' },
-  { id: 'maul', name: 'Cairn', cost: 28, cooldown: 0.85, damage: 2, speed: 220, radius: 7, color: '#d6a66b',
+  { id: 'maul', name: 'Cairn', cost: 48, cooldown: 0.95, damage: 2, speed: 220, radius: 7, color: '#d6a66b',
     short: 'earth / fracture', desc: 'A deliberate stone round. Starts with single-target damage. Choose spreading Tectonics or the focused Obelisk to break prepared targets.' },
-  { id: 'drift', name: 'Volt', cost: 18, cooldown: 0.55, damage: 1, speed: 390, radius: 4, color: '#c4b5fd',
+  { id: 'drift', name: 'Volt', cost: 32, cooldown: 0.65, damage: 1, speed: 390, radius: 4, color: '#c4b5fd',
     short: 'charge / velocity', desc: 'A nimble spark with no starting pierce or speed growth. Become a chaining Storm or a precision Rail round.' },
 ];
 const BALL_BY_ID = Object.fromEntries(BALL_TYPES.map(b => [b.id, b]));
 
 // Effects add per rank. "set" effects select a behavior or visual form.
 const TECH_NODES = [];
+// x/y are only a sibling-ordering hint for the tech tree layout (see tech.js).
 function addTech(id, tree, name, cost, maxLevel, req, x, y, desc, effects = {}, extra = {}) {
   TECH_NODES.push({ id, tree, name, cost, maxLevel, req: req.map(r => typeof r === 'string' ? { id: r, lvl: 1 } : r),
     x, y, desc, effects, kind: 'upgrade', ...extra });
@@ -346,7 +361,11 @@ function migrateTechSave(data) {
 function techNodeCost(node, level) {
   return node.cost === 0 ? 0 : Math.max(1, Math.round(node.cost * Math.pow(1.5, level)));
 }
-function ballPrice(baseCost, costMult, demand) {
+function ballPrice(baseCost, costMult, demand, ownLaunches = 0, totalLaunches = 0, volley = 1) {
   const heat = Math.min(PRICING.cap, Math.max(0, demand || 0));
-  return Math.max(1, Math.round(baseCost * costMult * (1 + heat * PRICING.perUnit)));
+  const own = Math.max(0, ownLaunches), total = Math.max(own, totalLaunches);
+  const investment = (1 + PRICING.ownGrowth * own + PRICING.fleetGrowth * total) *
+    Math.pow(1 + total / PRICING.fleetScale, PRICING.fleetExponent);
+  const volleyCost = 1 + 0.6 * Math.max(0, volley - 1);
+  return Math.max(1, Math.round(baseCost * costMult * investment * volleyCost * (1 + heat * PRICING.perUnit)));
 }

@@ -14,6 +14,12 @@ class Fx {
     this.wCursor = 0;
     this.tCursor = 0;
     this.quality = 2;
+    this.impacts = [];
+    this.impactPool = [];
+    this.statusEmitted = 0;
+    this.links = [];
+    this.linkPool = [];
+    this.linksEmitted = 0;
   }
 
   particle(x, y, vx, vy, life, color, size, drag, gravity) {
@@ -54,6 +60,34 @@ class Fx {
     }
   }
 
+  statusImpact(x, y, kind) {
+    const budget = this.quality >= 2 ? 12 : this.quality === 1 ? 6 : 2;
+    if (this.statusEmitted >= budget || this.impacts.length >= 64) return;
+    this.statusEmitted++;
+    const effect = this.impactPool.pop() || {};
+    Object.assign(effect, { x, y, kind, life: kind === 'shatter' ? 0.42 : 0.28,
+      maxLife: kind === 'shatter' ? 0.42 : 0.28 });
+    this.impacts.push(effect);
+    if (this.quality >= 1 && this.particles.length < this.maxParticles * 0.8) {
+      const color = kind === 'frozen' || kind === 'shatter' ? '#c9f7ff' :
+        kind === 'fault' ? '#ffd697' : kind === 'pierce' ? '#e4faff' : '#e5c8ff';
+      this.burst(x, y, color, kind === 'shatter' ? 6 : 2, kind === 'shatter' ? 150 : 60, 0.32, 3);
+    }
+  }
+
+  chain(ax, ay, bx, by, color) {
+    const budget = this.quality >= 2 ? 8 : this.quality === 1 ? 4 : 0;
+    if (this.linksEmitted >= budget || this.links.length >= 32) return;
+    this.linksEmitted++;
+    const link = this.linkPool.pop() || {};
+    const length = Math.hypot(bx - ax, by - ay) || 1;
+    const offset = CFG.PIXEL * 0.14;
+    Object.assign(link, { ax, ay, bx, by, color, life: 0.16, maxLife: 0.16,
+      mx: (ax + bx) / 2 - (by - ay) / length * offset,
+      my: (ay + by) / 2 + (bx - ax) / length * offset });
+    this.links.push(link);
+  }
+
   ring(x, y, color, radius) {
     let w;
     if (this.waves.length < 40) {
@@ -91,6 +125,26 @@ class Fx {
   }
 
   update(dt) {
+    this.statusEmitted = 0;
+    this.linksEmitted = 0;
+    for (let i = this.links.length - 1; i >= 0; i--) {
+      const link = this.links[i];
+      link.life -= dt;
+      if (link.life <= 0) {
+        const last = this.links.pop();
+        if (i < this.links.length) this.links[i] = last;
+        this.linkPool.push(link);
+      }
+    }
+    for (let i = this.impacts.length - 1; i >= 0; i--) {
+      const effect = this.impacts[i];
+      effect.life -= dt;
+      if (effect.life <= 0) {
+        const last = this.impacts.pop();
+        if (i < this.impacts.length) this.impacts[i] = last;
+        this.impactPool.push(effect);
+      }
+    }
     const ps = this.particles;
     for (let i = ps.length - 1; i >= 0; i--) {
       const p = ps[i];
@@ -131,6 +185,12 @@ class Fx {
   }
 
   clear() {
+    this.impactPool.push(...this.impacts);
+    this.impacts.length = 0;
+    this.statusEmitted = 0;
+    this.linkPool.push(...this.links);
+    this.links.length = 0;
+    this.linksEmitted = 0;
     this.particles.length = 0;
     this.waves.length = 0;
     this.texts.length = 0;

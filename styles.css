@@ -541,9 +541,7 @@ kbd {
 
 #treeCanvas {
   display: block;
-  width: 100%;
-  min-width: 0;
-  aspect-ratio: 1900 / 960;
+  margin: 0 auto;
   cursor: pointer;
   touch-action: pan-x pan-y;
 }

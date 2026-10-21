@@ -57,12 +57,14 @@ npm test         # world generation / fog / physics / save round-trip checks
 * **Shards** (gold gems) are always visible, even in the dark. They pay
   **skill points ✦** used by the tech tree. Shards further from the centre are
   worth more.
-* Destroying pixels pays **currency ◆**, which is what launching balls costs.
-  Every ball has its own reload time (shown as a bar on its dock card) and its
-  own **demand surcharge**: each launch adds +20% of the base price, and the
-  surcharge cools by 0.6 units/s while that ball rests, up to a 2.6× cap. Spam
-  one ball and it gets expensive for a moment; switch balls or pace your shots
-  and the price settles back down instead of growing forever.
+* Destroying pixels pays **currency ◆**: rounded `(2 + sqrt(original HP))`
+  before Refinery and Reclamation. An 8-HP pixel pays 5; an 80-HP pixel pays 11.
+  New games start with 150 currency, enough to try the roster.
+* Launch prices grow permanently with primary launches of that type and the
+  whole fleet. Growth is superlinear, so passive income cannot fund endless
+  cheap replication. A separate demand surcharge adds 30% per recent shot,
+  cools at 0.35 units/s, and caps at 2.8× the investment price. Discounts still
+  apply. Twin Launch costs 60% extra and records both primaries.
 
 ## Balls
 
@@ -73,9 +75,16 @@ direction comes from the drag.
 
 | Ball | Ability |
 | --- | --- |
-| **Rime** | 1 damage, 300 speed, 12 currency. Every fourth direct hit freezes a survivor for 4 seconds. Choose Glacier support or piercing Hail. |
-| **Cairn** | 2 damage, 220 speed, 28 currency. A modest single-target stone. Choose Tectonic crushes or Obelisk precision. |
-| **Volt** | 1 damage, 390 speed, 18 currency. A nimble spark. Choose Storm charge/chains or Rail speed/pierce. |
+| **Rime** | 1 damage, 300 speed, 24 base currency. Every fourth direct hit freezes a survivor for 4 seconds. Choose Glacier support or piercing Hail. |
+| **Cairn** | 2 damage, 220 speed, 48 base currency. A modest single-target stone. Choose Tectonic crushes or Obelisk precision. |
+| **Volt** | 1 damage, 390 speed, 32 base currency. A nimble spark. Choose Storm charge/chains or Rail speed/pierce. |
+
+**Pierce** spends one charge to damage and pass through one breakable pixel.
+It deals normal direct-hit damage and preserves motion until the ball fully
+exits that pixel, including with its final charge. Steel always reflects it.
+Passed cells are forgotten after exiting, so later visits hit normally and
+the ignore list stays bounded. Pierce spreads statuses through rows of pixels,
+reaches deeper targets, and feeds Phase Drive. A pale arc shows live charges.
 
 ## Tech
 
@@ -117,17 +126,29 @@ ribbon or aurora wakes that follow recent motion through ricochets. Six
 evolutions add circular rims and stronger trail identities. Tree previews and
 dock icons also stay round; cached spherical sprites serve dense scenes.
 
-Drag/scroll the tree or use its zoom/fit controls. Hovering a node shows its full effect and
-prerequisites; clicking it buys the upgrade immediately. Dashed red lines mark
-exclusive choices. Nodes cost ✦, not ◆. Purchases immediately update primary
-balls already in flight. Temporary pixel coatings use simulation time and are
-not persisted; the field, upgrades and economy are saved as before.
+Drag/scroll the tree or use its zoom/fit controls. Every tree is laid out
+automatically from its requirements: each depth is a column and each branch
+keeps its own lane, so links stay short and crossings are rare. Hovering a node
+shows its full effect and prerequisites; clicking it buys the upgrade
+immediately. Dashed red lines mark exclusive choices. Nodes cost ✦, not ◆.
+Purchases immediately update primary balls already in flight. Temporary pixel
+coatings use simulation time and are not persisted; the field, upgrades and
+economy are saved as before.
 
 Older saves keep their field, currency and selected ball. The previous trees
 are reset once, refunding their historical skill-point costs so players can
 choose a compatible new build. Internal ball IDs remain stable.
 The expanded trees preserve current builds. Older field health is scaled once
 while preserving cleared cells, partial damage, steel layout and shard positions.
+Primary balls now persist, including earned growth and spent pierce; temporary
+fragments expire on reload. Launch investment persists across reloads and new
+fields. Older saves without launch counts use their recorded shot total; a
+returning player with neither a fleet nor launch funds receives a small reserve.
+
+Run `npm run balance` for reproducible 120-second opening and specialized-build
+probes. Add `-- --seconds=600` for ten minutes, or `-- --legacy` to compare the old
+economy against the same combat. These are tuning probes, not player forecasts:
+they launch from the centre once per second and hold upgrades fixed.
 
 ## Sound
 
@@ -142,7 +163,7 @@ scheduled notes. Volumes and mute state persist.
 
 ## Performance notes
 
-* Health / steel / shard / visibility live in flat `Uint8Array`s (6 MB for the
+* Health / steel / shard / visibility / soil live in flat `Uint8Array`s (7 MB for the
   whole million-pixel world).
 * Rendering is chunked: 40×40 cells per cached offscreen canvas, repainted only
   when dirty and only for chunks on screen. Fog is baked into the chunks.
@@ -151,5 +172,10 @@ scheduled notes. Volumes and mute state persist.
   switches to a quad batching path above 2000 balls.
 * Pixel coatings are sparse and capped at 10,000 active cells. Chain searches
   and area reactions have bounded reach and cannot recursively trigger chains.
+* Faceted ice, glowing fault cracks and animated charge use at most 44 cached
+  64×64 textures. Rich overlays and simple distant tints have separate draw
+  budgets. Status accents and lightning links are pooled and capped at 64/32
+  live effects, with lower emission budgets at reduced quality.
 * An adaptive quality step drops trails/particles if frame time climbs.
-* The save file is the 1 MB health array deflated (~50 KB) plus meta.
+* The save file is the 1 MB health array deflated (~63 KB), primary ball
+  snapshots, launch counts and other metadata.

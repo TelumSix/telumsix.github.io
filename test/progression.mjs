@@ -8,8 +8,8 @@ const context = vm.createContext({ console, Math, Date, Map, Set, Uint8Array, pe
 for (const file of ['js/util.js', 'js/config.js', 'js/tech.js', 'js/reactions.js', 'js/balls.js', 'js/game.js', 'js/renderer.js']) {
   vm.runInContext(fs.readFileSync(new URL(file, root), 'utf8'), context, { filename: fileURLToPath(new URL(file, root)) });
 }
-const { Tech, TechUI, PixelReactions, BallSystem, Game, Renderer, BALL_TYPES, TECH_NODES, TECH_BY_ID, migrateTechSave, TECH_VERSION } =
-  vm.runInContext('({ Tech, TechUI, PixelReactions, BallSystem, Game, Renderer, BALL_TYPES, TECH_NODES, TECH_BY_ID, migrateTechSave, TECH_VERSION })', context);
+const { Tech, TechUI, PixelReactions, BallSystem, Game, Renderer, BALL_TYPES, TECH_NODES, TECH_BY_ID, migrateTechSave, TECH_VERSION, computeTreeLayout, NODE_W, NODE_H } =
+  vm.runInContext('({ Tech, TechUI, PixelReactions, BallSystem, Game, Renderer, BALL_TYPES, TECH_NODES, TECH_BY_ID, migrateTechSave, TECH_VERSION, computeTreeLayout, NODE_W, NODE_H })', context);
 
 function buy(tech, id, rank = 1) {
   const node = TECH_BY_ID[id];
@@ -220,6 +220,29 @@ function fixture() {
   assert.equal(tech.level('arc_dmg'), 1);
   assert.equal(game.skill, 7, 'actual purchases spend skill points');
   assert.ok(game.balls.applied, 'actual purchases refresh balls in flight');
+}
+
+// Every tree is auto-laid out: all nodes placed, finite, inside bounds, no overlaps.
+{
+  for (const tree of ['arc', 'maul', 'drift', 'field']) {
+    const layout = computeTreeLayout(tree);
+    const nodes = TECH_NODES.filter(n => n.tree === tree);
+    assert.equal(layout.pos.size, nodes.length, tree + ' places every node');
+    for (const n of nodes) {
+      const p = layout.pos.get(n.id);
+      assert.ok(Number.isFinite(p.x) && Number.isFinite(p.y), tree + ' places ' + n.id);
+      assert.ok(p.x - NODE_W / 2 >= 0 && p.y - NODE_H / 2 >= 0 &&
+        p.x + NODE_W / 2 <= layout.width && p.y + NODE_H / 2 <= layout.height, n.id + ' stays inside the canvas');
+    }
+    for (let i = 0; i < nodes.length; i++) {
+      for (let j = i + 1; j < nodes.length; j++) {
+        const a = layout.pos.get(nodes[i].id);
+        const b = layout.pos.get(nodes[j].id);
+        const overlap = Math.abs(a.x - b.x) < NODE_W && Math.abs(a.y - b.y) < NODE_H;
+        assert.ok(!overlap, nodes[i].id + ' does not overlap ' + nodes[j].id);
+      }
+    }
+  }
 }
 
 // Canvas and inspector paths execute against a minimal drawing surface.

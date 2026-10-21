@@ -161,10 +161,48 @@ class BallSystem {
 
   /** Re-applies the current tech to every ball already in flight. */
   applyUpgrades() {
+    const stats = Object.fromEntries(BALL_TYPES.map(def => [def.id, this.game.ballStats(def)]));
     for (const b of this.list) {
       const def = BALL_BY_ID[b.id];
       if (!def) continue;
-      this.applyStats(b, this.game.ballStats(def));
+      this.applyStats(b, stats[b.id]);
+    }
+  }
+
+  /** Persist investments; temporary fragments and visual history can expire. */
+  serializePrimary() {
+    const rows = [];
+    for (const b of this.list) {
+      if (!Object.hasOwn(BALL_BY_ID, b.id)) continue;
+      rows.push([b.id, Math.round(b.x * 100) / 100, Math.round(b.y * 100) / 100,
+        Math.atan2(b.vy, b.vx), Math.max(0, b.damage - b.baseDamage),
+        b.r / b.baseRadius, b.baseSpeed / b.speed0, b.pierce, b.bounces, b.hits, [...b.hitCells]]);
+    }
+    return rows;
+  }
+
+  restorePrimary(rows) {
+    if (!Array.isArray(rows)) return;
+    for (const row of rows.slice(0, CFG.MAX_BALLS)) {
+      if (!Array.isArray(row) || row.length < 10 || !Object.hasOwn(BALL_BY_ID, row[0]) ||
+        !row.slice(1, 10).every(Number.isFinite)) continue;
+      const def = BALL_BY_ID[row[0]];
+      const b = this.fire(def, clamp(row[1], def.radius, CFG.WORLD - def.radius),
+        clamp(row[2], def.radius, CFG.WORLD - def.radius), row[3]);
+      if (!b) break;
+      b.damage = Math.min(b.damageCap, b.damage + Math.max(0, row[4]));
+      b.r = clamp(b.baseRadius * row[5], b.baseRadius, b.radiusCap);
+      b.x = clamp(b.x, b.r, CFG.WORLD - b.r);
+      b.y = clamp(b.y, b.r, CFG.WORLD - b.r);
+      const speedRatio = clamp(row[6], 1, b.chargeCap);
+      b.baseSpeed *= speedRatio;
+      b.vx *= speedRatio; b.vy *= speedRatio;
+      b.pierce = clamp(Math.floor(row[7]), 0, b.pierceCap);
+      b.bounces = clamp(Math.floor(row[8]), 0, 1e9);
+      b.hits = clamp(Math.floor(row[9]), 0, 1e9);
+      for (const i of (Array.isArray(row[10]) ? row[10].slice(0, 4) : [])) {
+        if (Number.isInteger(i) && i >= 0 && i < this.world.n ** 2) b.hitCells.add(i);
+      }
     }
   }
 
@@ -297,7 +335,13 @@ class BallSystem {
 
     const health = this.world.health;
     const wall = this.world.wall;
-    const piercing = b.pierce > 0;
+    // A passed cell stays ignored until we have fully exited it, even after
+    // spending the final charge. Forget it afterwards so revisits hit normally.
+    for (const idx of b.hitCells) {
+      const px = (idx % n) * P, py = Math.floor(idx / n) * P;
+      if (b.x + r < px || b.x - r > px + P || b.y + r < py || b.y - r > py + P)
+        b.hitCells.delete(idx);
+    }
 
     // Pick the most relevant overlap, preferring cells the ball is actually
     // moving into. Resolving the first cell in scan order used to produce the
@@ -316,7 +360,7 @@ class BallSystem {
         const h = health[idx];
         const isWall = wall[idx];
         if (h === 0 && isWall === 0) continue;
-        if (piercing && b.hitCells.has(idx)) continue;
+        if (b.hitCells.has(idx)) continue;
 
         const px = cx * P;
         const qx = b.x < px ? px : (b.x > px + P ? px + P : b.x);
@@ -393,6 +437,7 @@ class BallSystem {
     if (b.pierce > 0) {
       b.pierce--;
       b.hitCells.add(best.idx);
+      if (this.game.onPierce) this.game.onPierce(b, cx, cy);
       if (b.pierceCharge > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
         const next = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.pierceCharge));
         const k = next / b.baseSpeed;
@@ -440,7 +485,7 @@ class BallSystem {
           const idx = row + cx;
           if (idx === b.ignoreCell) continue;
           if (health[idx] === 0 && wall[idx] === 0) continue;
-          if (b.pierce > 0 && b.hitCells.has(idx)) continue;
+          if (b.hitCells.has(idx)) continue;
 
           const px = cx * P;
           const qx = b.x < px ? px : (b.x > px + P ? px + P : b.x);

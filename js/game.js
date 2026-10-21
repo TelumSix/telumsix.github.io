@@ -11,10 +11,11 @@ class Game {
     this.skill = Math.max(0, Math.floor(this.saveData.skill || 0));
     this.stats = Object.assign({ shots: 0, kills: 0, earned: 0, shards: 0 }, this.saveData.stats || {});
     this.effects = this.tech.getEffects();
+    this.launchCounts = restoreLaunchCounts(this.saveData.launchCounts, this.stats.shots);
 
     const unlocked = this.tech.unlockedBalls().map(b => b.id);
     this.selected = unlocked.indexOf(this.saveData.selected) >= 0 ? this.saveData.selected : 'arc';
-    if (this.currency === 0 && !this.saveData.field && !this.saveData.seed) this.currency = 60;
+    if (this.currency === 0 && !this.saveData.field && !this.saveData.seed) this.currency = ECONOMY.startingCurrency;
 
     this.world.onDestroy = (cx, cy, maxH) => this.onPixelDestroyed(cx, cy, maxH);
     this.world.onShard = (cx, cy, value) => this.onShardCollected(cx, cy, value);
@@ -109,6 +110,16 @@ class Game {
       this.world.total = Math.max(1, this.world.total);
     }
     if (this.saveData.techRefund) this.toast('Ball trees rebuilt: refunded ' + this.saveData.techRefund + ' skill points. Open Tech to choose your build.', 'gold');
+    this.balls.restorePrimary(this.saveData.balls);
+    // Legacy saves had no in-flight fleet. Never leave a returning player
+    // without either a productive ball or enough currency to launch one.
+    if (!this.balls.count && this.world.remaining > 0) {
+      const reserve = Math.min(...BALL_TYPES.map(def => this.ballCost(def)));
+      if (this.currency < reserve) {
+        this.currency = reserve;
+        this.toast('Launch reserve restored: you can restart your fleet.', 'gold');
+      }
+    }
     this.displayCurrency = this.currency;
     this.refreshHud();
     this.renderer.updateMinimap();
@@ -199,7 +210,7 @@ class Game {
   /* -------------------------------------------------------------- pixels */
 
   onPixelDestroyed(cx, cy, maxH) {
-    const gain = Math.max(1, Math.round((2 + maxH * 2) * this.effects.yieldMult) + this.effects.bounty);
+    const gain = pixelReward(maxH, this.effects.yieldMult, this.effects.bounty);
     this.currency += gain;
     this.stats.earned += gain;
     this.stats.kills++;
@@ -255,8 +266,10 @@ class Game {
   /* ------------------------------------------------------------- shooting */
 
   ballCost(def) {
-    // Recent launches raise a demand surcharge; resting lets it cool off.
-    return ballPrice(def.cost, this.effects.costMult, this.demand[def.id] || 0);
+    const counts = this.launchCounts;
+    const total = BALL_TYPES.reduce((sum, ball) => sum + counts[ball.id], 0);
+    return ballPrice(def.cost, this.effects.costMult, this.demand[def.id] || 0,
+      counts[def.id], total, this.effects.volley);
   }
 
   restoreDemand(saved, savedAt) {
@@ -335,12 +348,13 @@ class Game {
   }
 
   onChain(x, y, nx, ny, color) {
-    if (this.renderer.quality < 1 || this.fx.particles.length > CFG.MAX_PARTICLES * 0.8) return;
-    for (let i = 0; i <= 6; i++) {
-      const t = i / 6;
-      this.fx.particle((x + 0.5 + (nx - x) * t) * CFG.PIXEL,
-        (y + 0.5 + (ny - y) * t) * CFG.PIXEL, 0, 0, 0.18, color, 3, 1, 0);
-    }
+    if (this.renderer.quality < 1 || !this.world.visible[y * this.world.n + x] ||
+      !this.world.visible[ny * this.world.n + nx]) return;
+    const ax = (x + 0.5) * CFG.PIXEL, ay = (y + 0.5) * CFG.PIXEL;
+    const bx = (nx + 0.5) * CFG.PIXEL, by = (ny + 0.5) * CFG.PIXEL;
+    const sx = this.cam.worldToScreenX(ax), sy = this.cam.worldToScreenY(ay);
+    if (sx < -180 || sx > this.renderer.w + 180 || sy < -180 || sy > this.renderer.h + 180) return;
+    this.fx.chain(ax, ay, bx, by, color);
   }
 
   onReaction(x, y, label, color) {
@@ -348,6 +362,20 @@ class Game {
     this.lastReactionFx = this.time;
     this.fx.text((x + 0.5) * CFG.PIXEL, (y + 0.2) * CFG.PIXEL, label, color, 11);
   }
+
+  onStatusApplied(x, y, kind) {
+    const budget = this.renderer.quality >= 2 ? 12 : this.renderer.quality === 1 ? 6 : 2;
+    if (this.fx.statusEmitted >= budget) return;
+    if (!this.world.visible[y * this.world.n + x]) return;
+    const wx = (x + 0.5) * CFG.PIXEL, wy = (y + 0.5) * CFG.PIXEL;
+    const sx = this.cam.worldToScreenX(wx), sy = this.cam.worldToScreenY(wy);
+    if (sx < -80 || sx > this.renderer.w + 80 || sy < -80 || sy > this.renderer.h + 80) return;
+    this.fx.statusImpact(wx, wy, kind);
+  }
+
+  onElementHit(x, y, kind) { this.onStatusApplied(x, y, kind); }
+
+  onPierce(b, x, y) { this.onStatusApplied(x, y, 'pierce'); }
 
   onPulse(wx, wy, radius, color) {
     const now = performance.now();
@@ -400,6 +428,7 @@ class Game {
 
     const angle = Math.atan2(dy, dx);
     const volley = this.effects.volley;
+    this.launchCounts[def.id] += volley;
     const spread = 0.055;
     let ox = clamp(aim.wx, 1, CFG.WORLD - 1);
     let oy = clamp(aim.wy, 1, CFG.WORLD - 1);
@@ -892,6 +921,7 @@ class Game {
         `<span class="bc-cd"><i></i></span>`;
       btn.title = `${def.desc}  ·  ${this.ballPreview(def)}  ·  ${this.ballCooldown(def).toFixed(2)}s reload · every launch adds a demand surcharge that cools while the ball rests`;
       btn._cdFill = btn.querySelector('.bc-cd > i');
+      btn.title += ' Fleet investment raises prices permanently. Pierce spends one charge to damage and pass through a pixel; steel still reflects.';
       btn.querySelector('.bc-dot').style.setProperty('--c', visual.color);
       if (visual.form !== 'seed') btn.querySelector('.bc-sub').textContent = visual.formName;
       btn._costEl = btn.querySelector('.bc-cost');
@@ -908,7 +938,7 @@ class Game {
       card.classList.toggle('selected', card.dataset.id === this.selected);
       const def = BALL_BY_ID[card.dataset.id];
       const costEl = card.querySelector('.bc-cost');
-      if (costEl && def) costEl.textContent = '\u25c6 ' + this.ballCost(def);
+      if (costEl && def) costEl.textContent = '\u25c6 ' + formatCompact(this.ballCost(def));
     }
   }
 
@@ -1000,14 +1030,16 @@ class Game {
       v: 5,
       techVersion: TECH_VERSION,
       fieldVersion: CFG.FIELD_VERSION,
+      launchCounts: { ...this.launchCounts },
+      balls: this.balls.serializePrimary(),
       seed: this.seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),
-      levels: this.tech.levels,
+      levels: { ...this.tech.levels },
       selected: this.selected,
-      demand: this.demand,
+      demand: { ...this.demand },
       demandAt: Date.now(),
-      stats: this.stats,
+      stats: { ...this.stats },
       total: this.world.total,
       field: null,
     };
@@ -1042,6 +1074,7 @@ class Game {
       v: 5,
       techVersion: TECH_VERSION,
       fieldVersion: CFG.FIELD_VERSION,
+      launchCounts: this.launchCounts,
       seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),

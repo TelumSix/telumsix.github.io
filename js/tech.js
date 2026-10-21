@@ -147,10 +147,100 @@ class Tech {
 
 /* ======================================================================== */
 
-const TREE_W = 1900;
-const TREE_H = 960;
 const NODE_W = 184;
 const NODE_H = 62;
+const COL_GAP = 54;
+const COL_W = NODE_W + COL_GAP;
+const ROW_H = 84;
+const PAD_X = 34;
+const PAD_Y = 30;
+
+// Authored coordinates only rank siblings; node placement is derived from the
+// requirement graph so the tree stays tidy as upgrades are added.
+const AUTHORED_POS = new Map(TECH_NODES.map(n => [n.id, { x: n.x, y: n.y }]));
+const TREE_LAYOUTS = new Map();
+
+const byAuthored = (a, b) => AUTHORED_POS.get(a).y - AUTHORED_POS.get(b).y ||
+  AUTHORED_POS.get(a).x - AUTHORED_POS.get(b).x;
+
+function computeTreeLayout(tree) {
+  const nodes = TECH_NODES.filter(n => n.tree === tree);
+  const byId = new Map(nodes.map(n => [n.id, n]));
+  const reqs = n => n.req.map(r => r.id).filter(id => byId.has(id));
+
+  const depth = new Map();
+  for (const n of nodes) if (!reqs(n).length) depth.set(n.id, 0);
+  for (let pass = 0; pass < nodes.length; pass++) {
+    let moved = false;
+    for (const n of nodes) {
+      const list = reqs(n);
+      if (!list.length || !list.every(r => depth.has(r))) continue;
+      const d = Math.max(...list.map(r => depth.get(r))) + 1;
+      if (depth.get(n.id) !== d) { depth.set(n.id, d); moved = true; }
+    }
+    if (!moved) break;
+  }
+
+  // A node hangs off its deepest requirement; shallower ones become skip links.
+  const parent = new Map();
+  for (const n of nodes) {
+    const candidates = reqs(n).filter(r => depth.get(r) === depth.get(n.id) - 1).sort(byAuthored);
+    if (candidates.length) parent.set(n.id, candidates[0]);
+  }
+  const children = new Map(nodes.map(n => [n.id, []]));
+  for (const [id, p] of parent) children.get(p).push(id);
+  for (const list of children.values()) list.sort(byAuthored);
+  const root = nodes.find(n => !parent.has(n.id));
+
+  // Each leaf claims a lane; parents sit centred over their child span.
+  const lane = new Map();
+  let lanes = 0;
+  const place = id => {
+    const kids = children.get(id);
+    if (!kids.length) { lane.set(id, lanes); return lanes++; }
+    let first = 0;
+    let last = 0;
+    kids.forEach((kid, i) => {
+      const y = place(kid);
+      if (i === 0) first = y;
+      last = y;
+    });
+    const middle = (first + last) / 2;
+    lane.set(id, middle);
+    return middle;
+  };
+  place(root.id);
+
+  const maxDepth = Math.max(...depth.values());
+  const contentBottom = PAD_Y + (lanes - 1) * ROW_H + NODE_H;
+
+  const pos = new Map();
+  for (const n of nodes) {
+    pos.set(n.id, {
+      x: PAD_X + NODE_W / 2 + depth.get(n.id) * COL_W,
+      y: PAD_Y + NODE_H / 2 + lane.get(n.id) * ROW_H,
+    });
+  }
+
+  // A tinted band behind each root branch makes the lanes easy to follow.
+  const span = id => children.get(id).reduce((acc, kid) => {
+    const [a, b] = span(kid);
+    return [Math.min(acc[0], a), Math.max(acc[1], b)];
+  }, [lane.get(id), lane.get(id)]);
+  const bandX0 = PAD_X + NODE_W + 4;
+  const bandX1 = PAD_X + NODE_W + maxDepth * COL_W + 6;
+  const bands = children.get(root.id).map((id, i) => {
+    const [a, b] = span(id);
+    return { alt: i % 2 === 1, x0: bandX0, x1: bandX1,
+      y0: PAD_Y + a * ROW_H - 8, y1: PAD_Y + b * ROW_H + NODE_H + 8 };
+  });
+
+  return {
+    tree, pos, bands,
+    width: PAD_X * 2 + NODE_W + maxDepth * COL_W,
+    height: contentBottom + PAD_Y,
+  };
+}
 
 class TechUI {
   constructor(game) {
@@ -172,8 +262,11 @@ class TechUI {
   bind() {
     document.getElementById('treeZoomOut').addEventListener('click', () => this.setZoom(this.viewScale - 0.15));
     document.getElementById('treeZoomIn').addEventListener('click', () => this.setZoom(this.viewScale + 0.15));
-    document.getElementById('treeFit').addEventListener('click', () => this.setZoom(Math.min(
-      (this.treeWrap.clientWidth - 4) / TREE_W, (this.treeWrap.clientHeight - 4) / TREE_H)));
+    document.getElementById('treeFit').addEventListener('click', () => {
+      this.ensureLayout();
+      const availH = Math.max(this.treeWrap.clientHeight, window.innerHeight * 0.52);
+      this.setZoom(Math.min((this.treeWrap.clientWidth - 4) / this.treeW, (availH - 4) / this.treeH));
+    });
     this.info.addEventListener('click', e => {
       if (e.target.closest('[data-buy-tech]') && this.inspected) {
         this.game.buyNode(this.inspected);
@@ -266,8 +359,10 @@ class TechUI {
   }
 
   setZoom(scale) {
+    this.ensureLayout();
     this.viewScale = clamp(scale, 0.15, 1.3);
-    this.canvas.style.width = Math.round(TREE_W * this.viewScale) + 'px';
+    this.canvas.style.width = Math.round(this.treeW * this.viewScale) + 'px';
+    this.canvas.style.height = Math.round(this.treeH * this.viewScale) + 'px';
     this.resize();
     this.draw();
   }
@@ -275,10 +370,31 @@ class TechUI {
   open() {
     this.overlay.classList.remove('hidden');
     this.updateTabs();
+    if (!this._openedOnce) {
+      this._openedOnce = true;
+      this.fitWidth();
+      // Scrollbars only exist after the panel has laid out, so measure again.
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => requestAnimationFrame(() => { if (this.isOpen) this.fitWidth(); }));
+      }
+    }
     this.resize();
     this.draw();
     this.setInfo(this.selectedNode);
     this.game.sfx.click();
+  }
+
+  fitWidth() {
+    this.ensureLayout();
+    // Hide the horizontal scrollbar while measuring so it cannot feed back
+    // into its own width and leave a permanent horizontal gutter.
+    const wrap = this.treeWrap;
+    const overflowX = wrap.style.overflowX;
+    wrap.style.overflowX = 'hidden';
+    const available = wrap.clientWidth;
+    wrap.style.overflowX = overflowX;
+    this.viewScale = clamp((available - 4) / this.treeW, 0.3, 1.3);
+    this.setZoom(this.viewScale);
   }
 
   close() {
@@ -292,6 +408,7 @@ class TechUI {
   }
 
   resize() {
+    this.ensureLayout();
     const rect = this.canvas.getBoundingClientRect();
     const dpr = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.max(1, Math.round(rect.width * dpr));
@@ -300,16 +417,29 @@ class TechUI {
       this.canvas.width = w;
       this.canvas.height = h;
     }
-    this.scaleX = w / TREE_W;
-    this.scaleY = h / TREE_H;
+    this.scaleX = w / this.treeW;
+    this.scaleY = h / this.treeH;
   }
 
   toTree(e) {
+    this.ensureLayout();
     const rect = this.canvas.getBoundingClientRect();
     return {
-      x: ((e.clientX - rect.left) / Math.max(1, rect.width)) * TREE_W,
-      y: ((e.clientY - rect.top) / Math.max(1, rect.height)) * TREE_H,
+      x: ((e.clientX - rect.left) / Math.max(1, rect.width)) * this.treeW,
+      y: ((e.clientY - rect.top) / Math.max(1, rect.height)) * this.treeH,
     };
+  }
+
+  ensureLayout() {
+    if (!TREE_LAYOUTS.has(this.tree)) TREE_LAYOUTS.set(this.tree, computeTreeLayout(this.tree));
+    const layout = TREE_LAYOUTS.get(this.tree);
+    for (const node of TECH_NODES) {
+      const p = layout.pos.get(node.id);
+      if (p) { node.x = p.x; node.y = p.y; }
+    }
+    this.treeW = layout.width;
+    this.treeH = layout.height;
+    return layout;
   }
 
   nodes() {
@@ -405,6 +535,9 @@ class TechUI {
     const cw = this.canvas.width;
     const ch = this.canvas.height;
     if (cw === 0 || ch === 0) return;
+    const layout = this.ensureLayout();
+    const treeW = this.treeW;
+    const treeH = this.treeH;
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, cw, ch);
@@ -412,10 +545,18 @@ class TechUI {
 
     // backdrop dots
     ctx.fillStyle = 'rgba(120, 160, 220, 0.07)';
-    for (let y = 20; y < TREE_H; y += 28) {
-      for (let x = 20; x < TREE_W; x += 28) {
+    for (let y = 20; y < treeH; y += 28) {
+      for (let x = 20; x < treeW; x += 28) {
         ctx.fillRect(x, y, 1.4, 1.4);
       }
+    }
+
+    // branch bands
+    for (const band of layout.bands) {
+      if (!band.alt) continue;
+      roundRectPath(ctx, band.x0, band.y0, band.x1 - band.x0, band.y1 - band.y0, 14);
+      ctx.fillStyle = 'rgba(120, 160, 220, 0.035)';
+      ctx.fill();
     }
 
     const tech = this.game.tech;
@@ -428,19 +569,19 @@ class TechUI {
         if (!set.has(r.id)) continue;
         const from = TECH_BY_ID[r.id];
         const ok = tech.level(r.id) >= r.lvl;
-        const x1 = from.x + NODE_W / 2;
-        const y1 = from.y;
-        const x2 = node.x - NODE_W / 2;
-        const y2 = node.y;
-        const mx = (x1 + x2) * 0.5;
-        ctx.beginPath();
-        ctx.moveTo(x1, y1);
-        ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
+        const skip = Math.abs(from.x - node.x) > COL_W * 1.01;
         ctx.strokeStyle = ok ? 'rgba(52, 211, 153, 0.45)' : 'rgba(96, 122, 158, 0.22)';
+        if (skip) ctx.strokeStyle = ok ? 'rgba(52, 211, 153, 0.2)' : 'rgba(96, 122, 158, 0.14)';
+        ctx.beginPath();
+        const x1 = from.x + NODE_W / 2;
+        const x2 = node.x - NODE_W / 2;
+        const mx = (x1 + x2) * 0.5;
+        ctx.moveTo(x1, from.y);
+        ctx.bezierCurveTo(mx, from.y, mx, node.y, x2, node.y);
         ctx.stroke();
       }
     }
-    // Return routes bend outside the main lanes; emphasize the inspected path.
+    // Return routes arc over the lanes and only surface when they matter.
     ctx.setLineDash([3, 7]);
     for (const node of nodes) {
       for (const route of node.routes || []) {
@@ -449,26 +590,35 @@ class TechUI {
           if (from.tree !== this.tree) continue;
           const active = tech.level(r.id) > 0;
           const focus = this.hover === node || this.hover === from || this.selectedNode === node || this.selectedNode === from;
+          if (!active && !focus) continue;
           ctx.strokeStyle = active || focus ? 'rgba(99,214,208,0.65)' : 'rgba(99,214,208,0.18)';
           ctx.beginPath();
-          const backwards = from.x > node.x;
-          const lane = node.y < 380 ? 65 : 755;
-          ctx.moveTo(from.x, from.y + (backwards ? -NODE_H / 2 : 0));
-          ctx.bezierCurveTo(from.x, lane, node.x, lane, node.x, node.y - NODE_H / 2);
+          ctx.moveTo(from.x, from.y - NODE_H / 2);
+          ctx.bezierCurveTo(from.x, 12, node.x, 12, node.x, node.y - NODE_H / 2);
           ctx.stroke();
         }
       }
     }
 
+    // Exclusive pairs sit in one column; otherwise link the facing edges.
     ctx.setLineDash([5, 5]);
-    ctx.strokeStyle = 'rgba(248,113,113,0.5)';
+    ctx.strokeStyle = 'rgba(248,113,113,0.34)';
     for (const node of nodes) {
       for (const id of node.excludes || []) {
         const other = TECH_BY_ID[id];
         if (node.id > id || other.tree !== this.tree) continue;
         ctx.beginPath();
-        ctx.moveTo(node.x, node.y + NODE_H / 2);
-        ctx.lineTo(other.x, other.y - NODE_H / 2);
+        if (Math.abs(node.x - other.x) < 1) {
+          const edge = node.x - NODE_W / 2;
+          ctx.moveTo(edge - 4, node.y);
+          ctx.lineTo(edge - 20, node.y);
+          ctx.lineTo(edge - 20, other.y);
+          ctx.lineTo(edge - 4, other.y);
+        } else {
+          const dir = Math.sign(other.x - node.x);
+          ctx.moveTo(node.x + dir * (NODE_W / 2 + 4), node.y);
+          ctx.lineTo(other.x - dir * (NODE_W / 2 + 4), other.y);
+        }
         ctx.stroke();
       }
     }

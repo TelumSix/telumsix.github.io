@@ -28,15 +28,15 @@ const ballPrice = evalIn('ballPrice');
 
 {
   assert.strictEqual(ballPrice(10, 1, 0), 10, 'base price without demand');
-  assert.strictEqual(ballPrice(10, 1, 1), 12, 'one launch adds 20%');
+  assert.strictEqual(ballPrice(10, 1, 1), 13, 'one launch adds 30% demand');
   assert.strictEqual(ballPrice(10, 1, -5), 10, 'demand cannot go negative');
   const capped = ballPrice(10, 1, PRICING.cap);
-  assert.strictEqual(capped, 26, 'surcharge is capped at 2.6x');
+  assert.strictEqual(capped, 28, 'temporary surcharge is capped at 2.8x');
   assert.strictEqual(ballPrice(10, 1, PRICING.cap * 10), capped, 'demand clamps to the cap');
   assert.strictEqual(ballPrice(10, 0.88, 0), 9, 'cost multiplier still applies');
   let demand = 0;
   for (let i = 0; i < 40; i++) demand = Math.min(PRICING.cap, demand + PRICING.gain);
-  assert.strictEqual(ballPrice(700, 1, demand), 1820, 'repeated launches never exceed 2.6x');
+  assert.strictEqual(ballPrice(700, 1, demand), 1960, 'demand alone never exceeds 2.8x');
 }
 
 /* ------------------------------------------------------- roster + trees */

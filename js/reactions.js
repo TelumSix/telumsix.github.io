@@ -37,11 +37,15 @@ class PixelReactions {
     if (!s) {
       // Bound memory and overlay work even in a fully developed field.
       if (this.cells.size >= 10000) this.cells.delete(this.cells.keys().next().value);
-      s = { frozen: 0, fault: 0, charged: 0, brittle: 0, faultPower: 0 };
+      s = { frozen: 0, fault: 0, charged: 0, frozenAt: -1, faultAt: -1, chargedAt: -1, brittle: 0, faultPower: 0 };
       this.cells.set(i, s);
     }
     if (kind === 'frozen') s.brittle = Math.max(s.frozen > this.time ? s.brittle : 0, power);
     if (kind === 'fault') s.faultPower = Math.max(s.fault > this.time ? s.faultPower : 0, power);
+    if (s[kind] <= this.time) {
+      s[kind + 'At'] = this.time;
+      if (this.game.onStatusApplied) this.game.onStatusApplied(x, y, kind);
+    }
     s[kind] = Math.max(s[kind], this.time + duration);
   }
 
@@ -89,6 +93,11 @@ class PixelReactions {
       if (fault) damage += r.areaFaultBonus || 0;
     }
     const result = w.damageAt(x, y, Math.max(1, Math.round(damage)));
+    if (!area && this.game.onElementHit) {
+      if (result === 2 && frozen) this.game.onElementHit(x, y, 'shatter');
+      else if (consumesCharge) this.game.onElementHit(x, y, 'discharge');
+      else if (frozen || charged || fault) this.game.onElementHit(x, y, frozen ? 'frozen' : charged ? 'charged' : 'fault');
+    }
     if (result === 2) this.cells.delete(i);
     if (area) {
       if (result === 1 && r.frostPulse) this.coat(x, y, 'frozen', r.freezeDuration, r.brittle);
