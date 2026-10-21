@@ -45,7 +45,7 @@ class PixelReactions {
     s[kind] = Math.max(s[kind], this.time + duration);
   }
 
-  spread(x, y, count, duration, power = 0) {
+  spread(x, y, count, duration, power = 0, kind = 'frozen') {
     let used = 0;
     for (const o of this.offsets) {
       if (o.d > 2 || used >= count) break;
@@ -53,7 +53,7 @@ class PixelReactions {
       if (!this.world.inBounds(nx, ny)) continue;
       const i = ny * this.world.n + nx;
       if (!this.world.health[i] || this.world.wall[i]) continue;
-      this.coat(nx, ny, 'frozen', duration, power);
+      this.coat(nx, ny, kind, duration, power);
       used++;
     }
   }
@@ -75,6 +75,8 @@ class PixelReactions {
       if (frozen) damage += (s.brittle || 0) + (r.frozenBonus || 0);
       if (fault) damage += (s.faultPower || 0) + (r.faultBonus || 0);
       if (charged) damage += (r.chargedBonus || 0) + (r.chargeConsume || 0) + (r.supercool ? 3 : 0);
+      if (w.material && w.material[i]) damage += r.soilBonus || 0;
+      if (w.health[i] < w.maxHealth[i] * 0.5) damage += r.woundedBonus || 0;
       const coatings = Number(frozen) + Number(fault) + Number(charged);
       if (coatings >= 2) damage += r.lattice || 0;
       if (coatings === 3) damage += r.convergence || 0;
@@ -95,12 +97,16 @@ class PixelReactions {
       return result;
     }
     if (result === 1) {
+      if (frozen && r.refreshFreeze) this.coat(x, y, 'frozen', r.freezeDuration, s.brittle);
       const freeze = (r.freezeEvery && b.hits % r.freezeEvery === 0) || (charged && r.supercool);
       if (freeze) {
         this.coat(x, y, 'frozen', r.freezeDuration, r.brittle);
         if (r.freezeSpread) this.spread(x, y, r.freezeSpread, r.freezeDuration, r.brittle);
       }
-      if (r.faultPower && b.hits % 3 === 0) this.coat(x, y, 'fault', r.faultDuration, r.faultPower);
+      if (r.faultPower && b.hits % 3 === 0) {
+        this.coat(x, y, 'fault', r.faultDuration, r.faultPower);
+        if (r.faultSpread) this.spread(x, y, r.faultSpread, r.faultDuration, r.faultPower, 'fault');
+      }
       if (fault && r.refreshFault) this.coat(x, y, 'fault', r.faultDuration, s.faultPower);
       if (r.staticEnabled && !consumesCharge && b.hits % r.staticEvery === 0)
         this.coat(x, y, 'charged', r.chargeDuration);
@@ -110,6 +116,12 @@ class PixelReactions {
     if (result === 2 && frozen) {
       if (r.frostBloom) this.spread(x, y, r.frostBloom, r.freezeDuration, r.brittle);
       if (r.avalanche) this.spread(x, y, r.avalanche, 5);
+      if (r.thawBurst) this.burst(b, (x + 0.5) * CFG.PIXEL, (y + 0.5) * CFG.PIXEL, CFG.PIXEL * 1.2, r.thawBurst);
+    }
+    if (result === 2 && r.onKillPierce) b.pierce = Math.min(b.pierceCap, b.pierce + r.onKillPierce);
+    if (r.echoStrikeEvery && b.hits % r.echoStrikeEvery === 0) {
+      this.burst(b, (x + 0.5) * CFG.PIXEL, (y + 0.5) * CFG.PIXEL, CFG.PIXEL * 1.2, r.echoStrikeDmg);
+      this.game.onImpactBlast(b.x, b.y, CFG.PIXEL * 1.2, b.color);
     }
     if (charged && r.groundBurst) {
       this.burst(b, (x + 0.5) * CFG.PIXEL, (y + 0.5) * CFG.PIXEL, CFG.PIXEL * 1.5, r.groundBurst);

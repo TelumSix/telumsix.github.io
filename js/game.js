@@ -98,7 +98,7 @@ class Game {
     if (this.saveData.field) {
       try {
         const bytes = await inflateBytes(b64decode(this.saveData.field));
-        restored = this.world.applyField(bytes);
+        restored = this.world.applyField(bytes, this.saveData.fieldVersion || 1);
       } catch (e) {
         console.warn('Could not restore field:', e);
       }
@@ -158,6 +158,7 @@ class Game {
     }
 
     this.balls.update(dt);
+    this.sfx.update();
     this.fx.update(dt);
     this.fx.quality = this.renderer.quality;
 
@@ -262,7 +263,7 @@ class Game {
     const demand = Object.create(null);
     if (!saved || typeof saved !== 'object') return demand;
     const idle = Math.max(0, (Date.now() - (Number(savedAt) || Date.now())) / 1000);
-    const cooled = PRICING.coolPerSec * Math.min(idle, 3600);
+    const cooled = PRICING.coolPerSec * Math.min(idle, 3600) * this.effects.demandCooling;
     for (const id in saved) {
       const v = Number(saved[id]);
       if (!isFinite(v)) continue;
@@ -273,7 +274,7 @@ class Game {
   }
 
   coolDemand(dt) {
-    const cool = PRICING.coolPerSec * dt;
+    const cool = PRICING.coolPerSec * dt * this.effects.demandCooling;
     for (const id in this.demand) {
       const left = this.demand[id] - cool;
       if (left > 0.001) this.demand[id] = left;
@@ -758,8 +759,12 @@ class Game {
     el.innerHTML = '';
     const rows = [
       ['fresh', pixelCss(CFG.MAX_HEALTH, CFG.MAX_HEALTH)],
-      ['hurt', pixelCss(CFG.MAX_HEALTH, Math.round(CFG.MAX_HEALTH * 0.6))],
-      ['critical', pixelCss(CFG.MAX_HEALTH, 4)],
+      ['soil', 'rgb(' + FRESH_BROWN.join(',') + ')'],
+      ['60 HP', pixelCss(CFG.MAX_HEALTH, 60)],
+      ['40 HP', pixelCss(CFG.MAX_HEALTH, 40)],
+      ['20 HP', pixelCss(CFG.MAX_HEALTH, 20)],
+      ['10 HP', pixelCss(CFG.MAX_HEALTH, 10)],
+      ['1 HP', pixelCss(CFG.MAX_HEALTH, 1)],
       ['steel', `rgb(${WALL_RGB[0]},${WALL_RGB[1]},${WALL_RGB[2]})`],
       ['shard \u2726', SHARD_CSS],
     ];
@@ -994,6 +999,7 @@ class Game {
     const meta = {
       v: 5,
       techVersion: TECH_VERSION,
+      fieldVersion: CFG.FIELD_VERSION,
       seed: this.seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),
@@ -1035,6 +1041,7 @@ class Game {
     const meta = {
       v: 5,
       techVersion: TECH_VERSION,
+      fieldVersion: CFG.FIELD_VERSION,
       seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),

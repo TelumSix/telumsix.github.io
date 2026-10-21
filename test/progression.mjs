@@ -13,12 +13,40 @@ const { Tech, TechUI, PixelReactions, BallSystem, Game, Renderer, BALL_TYPES, TE
 
 function buy(tech, id, rank = 1) {
   const node = TECH_BY_ID[id];
-  for (const req of node.req) if (tech.level(req.id) < req.lvl) buy(tech, req.id, req.lvl);
+  if (tech.level(id) >= rank) return;
+  const route = tech.routes(node).find(route => route.every(r => !tech.blockedBy(TECH_BY_ID[r.id]).length));
+  assert.ok(route, 'a viable route exists for ' + id);
+  for (const req of route) if (tech.level(req.id) < req.lvl) buy(tech, req.id, req.lvl);
   assert.ok(tech.canBuy(node, Infinity) || tech.level(id) >= rank, id + ' must be reachable');
   tech.levels[id] = rank;
 }
 
-assert.equal(TECH_NODES.filter(n => n.cost).length, 81);
+for (const gateway of TECH_NODES.filter(n => n.reopens)) {
+  const tech = new Tech();
+  buy(tech, gateway.id);
+  for (const target of gateway.reopens) {
+    assert.ok(tech.canBuy(TECH_BY_ID[target], Infinity), gateway.id + ' reopens ' + target);
+    buy(tech, target);
+    assert.ok(new Tech(tech.levels).level(target), 'detours survive saves');
+  }
+  if (gateway.tree !== 'field') {
+    const specializations = TECH_NODES.filter(n => n.tree === gateway.tree && n.tag === 'SPECIALIZATION');
+    assert.equal(specializations.filter(n => tech.level(n.id)).length, 1, 'gateway does not grant the rival specialization');
+    const rival = specializations.find(n => !tech.level(n.id));
+    assert.ok(!tech.canBuy(rival, Infinity), 'rival specialization remains permanently sealed');
+  }
+}
+{
+  const tech = new Tech();
+  buy(tech, 'focused');
+  buy(tech, 'reunion');
+  buy(tech, 'echo');
+  assert.equal(tech.level('focused'), 1);
+  assert.equal(tech.level('volley'), 0);
+  assert.equal(tech.level('echo'), 1, 'Reunion returns to the other launch support path');
+}
+
+assert.equal(TECH_NODES.filter(n => n.cost).length, 126);
 for (const node of TECH_NODES) {
   const tech = new Tech();
   if (node.cost) buy(tech, node.id, node.maxLevel);
@@ -30,7 +58,8 @@ for (const node of TECH_NODES) {
     assert.ok(TECH_BY_ID[rival].excludes.includes(node.id), 'exclusions are symmetric');
     assert.ok(!tech.canBuy(TECH_BY_ID[rival], Infinity), 'rival choice is blocked');
     for (const descendant of TECH_NODES.filter(n => n.req.some(r => r.id === rival))) {
-      assert.ok(tech.blockedBy(descendant).length, 'rival descendants display sealed');
+      const returnMet = (descendant.routes || []).some(route => route.every(r => tech.level(r.id) >= r.lvl));
+      if (!returnMet) assert.ok(!tech.canBuy(descendant, Infinity), 'rival descendants need their original path or a purchased detour');
     }
   }
   for (const def of BALL_TYPES) {
@@ -214,5 +243,43 @@ function fixture() {
   Object.assign(renderer, { ctx: draw, w: 1000, h: 800, quality: 2 });
   const list = TECH_NODES.filter(n => n.form).map(n => ({ x: 100, y: 100, vx: 1, vy: 0, r: 8, form: n.form, color: '#abcdef' }));
   renderer.drawBalls(list, { zoom: 1, worldToScreenX: x => x, worldToScreenY: y => y });
+  const arcs = [];
+  const roundSurface = new Proxy({}, {
+    get: (_o, key) => {
+      if (key === 'arc') return (...args) => arcs.push(args);
+      if (key === 'scale' || key === 'lineTo' || key === 'fillRect') return () => assert.fail('ball body must stay circular');
+      return () => {};
+    },
+    set: () => true,
+  });
+  context.roundSurface = roundSurface;
+  for (const form of ['seed', ...TECH_NODES.filter(n => n.form).map(n => n.form)]) {
+    arcs.length = 0;
+    context.roundForm = form;
+    vm.runInContext("drawBallForm(roundSurface, 0, 0, 8, roundForm, '#abcdef')", context);
+    assert.equal(arcs[0][2], 8, 'every form begins with the same round core');
+    assert.equal(arcs[0][4], Math.PI * 2, 'core is a full circle');
+  }
+}
+{
+  const world = { n: 40, health: new Uint8Array(1600).fill(80), maxHealth: new Uint8Array(1600).fill(80),
+    wall: new Uint8Array(1600), special: new Uint8Array(1600), visible: new Uint8Array(1600).fill(1),
+    open: new Uint8Array(1600), material: new Uint8Array(1600) };
+  const renderer = Object.create(Renderer.prototype);
+  renderer.world = world;
+  renderer.lut = renderer.buildLut();
+  const chunk = { img: { data: new Uint8ClampedArray(1600 * 4) }, ctx: { putImageData() {} } };
+  const pixel = 410;
+  world.material[pixel] = 1;
+  renderer.paintChunk(chunk, 0, 0);
+  const fresh = Array.from(chunk.img.data.slice(pixel * 4, pixel * 4 + 3));
+  assert.ok(fresh[0] > fresh[1] && fresh[1] > fresh[2], 'actual untouched soil renderer is brown');
+  world.health[pixel] = 79;
+  renderer.paintChunk(chunk, 0, 0);
+  const hit = Array.from(chunk.img.data.slice(pixel * 4, pixel * 4 + 3));
+  assert.notDeepEqual(hit, fresh, 'first hit changes the actual chunk colour');
+  world.material[pixel] = 0;
+  renderer.paintChunk(chunk, 0, 0);
+  assert.deepEqual(Array.from(chunk.img.data.slice(pixel * 4, pixel * 4 + 3)), hit, 'damaged stone and soil share their HP palette');
 }
 console.log('OK — progression, exclusions, reactions, migration, live upgrades and canvas paths');

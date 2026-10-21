@@ -16,7 +16,8 @@ const CFG = {
   MAX_ZOOM: 2.6,
   FREE_R: 7,
   REVEAL: 3,
-  MAX_HEALTH: 40,
+  MAX_HEALTH: 80,
+  FIELD_VERSION: 2,
   SAVE_KEY: 'pixelfield.save.v4',
   MUTE_KEY: 'pixelfield.muted',
   VOLUME_KEY: 'pixelfield.volumes',
@@ -41,15 +42,13 @@ const PRICING = {
   perUnit: 0.2,
 };
 
-/**
- * Every undamaged pixel is the same neutral grey. Damage tints it through
- * yellow -> orange -> red according to the health it has left.
- */
+/** Undamaged stone/soil hides its strength; damaged colour uses absolute HP. */
 const FRESH_GREY = [138, 150, 168];
-
-const DAMAGE_YELLOW = [255, 214, 102];
-const DAMAGE_ORANGE = [249, 115, 22];
-const DAMAGE_RED = [239, 68, 68];
+const FRESH_BROWN = [137, 103, 78];
+const HEALTH_COLORS = [
+  [1, [239, 83, 80]], [10, [245, 145, 76]], [20, [239, 205, 100]],
+  [40, [110, 193, 138]], [60, [93, 183, 213]], [80, [162, 144, 216]],
+];
 
 function mixRgb(a, b, t) {
   return [
@@ -59,19 +58,16 @@ function mixRgb(a, b, t) {
   ];
 }
 
-function pixelColorRGB(maxH, h) {
+function pixelColorRGB(maxH, h, material = 0) {
   const m = clamp(maxH | 0, 1, CFG.MAX_HEALTH);
   const cur = clamp(h | 0, 1, m);
-  if (m <= 1 || cur >= m) return FRESH_GREY;
-  // How hurt the pixel is, so its colour tracks the health it has left.
-  const hurt = 1 - (cur - 1) / (m - 1);
-  const heatT = Math.pow(hurt, 0.65);
-  const heat = heatT < 0.5
-    ? mixRgb(DAMAGE_YELLOW, DAMAGE_ORANGE, heatT * 2)
-    : mixRgb(DAMAGE_ORANGE, DAMAGE_RED, (heatT - 0.5) * 2);
-  // Even the first hit shows; the tint deepens as health drains away.
-  const tint = Math.min(1, 0.22 + heatT * 0.95);
-  return mixRgb(FRESH_GREY, heat, tint);
+  if (cur >= m) return material ? FRESH_BROWN : FRESH_GREY;
+  for (let i = 1; i < HEALTH_COLORS.length; i++) {
+    const [upper, color] = HEALTH_COLORS[i];
+    const [lower, previous] = HEALTH_COLORS[i - 1];
+    if (cur <= upper) return mixRgb(previous, color, (cur - lower) / (upper - lower));
+  }
+  return HEALTH_COLORS.at(-1)[1];
 }
 
 function pixelCss(maxH, h) {
@@ -131,7 +127,7 @@ ballTree('arc', [
   ['spd', 'Slipstream', '+8% launch speed per rank.', { speedBonus: 0.08 }],
 ], [
   { key: 'glacier', name: 'Glacier', req: 'frost', form: 'glacier',
-    desc: 'Choose Glacier. Freeze every hit; seals off Hail. Visual: six-point ice crystal.',
+    desc: 'Choose Glacier. Freeze every hit; seals off Hail specialization. Visual: round frost core with a snowy wake.',
     effects: { set: { freezeEvery: 1 } },
     nodes: [
       ['hoarfrost', 'Hoarfrost', 'Each freeze also freezes one adjacent pixel.', { freezeSpread: 1 }],
@@ -141,21 +137,21 @@ ballTree('arc', [
       ['permafrost', 'Permafrost', '+6 freeze seconds; frost coatings remember their strongest Brittle bonus.', { freezeDuration: 6 }],
       ['coldheart', 'Cold Heart', 'Frost pulses arrive 4 bounces sooner and reach 0.6 pixels farther.', { pulseFaster: 4, pulseRadius: 30 }],
     ],
-    cap: ['winter', 'Winter Crown', 'Evolution: crowned crystal. Kills on frozen targets freeze up to 4 neighbors. +2 direct damage.', { frostBloom: 4, damage: 2 }, 'winter'],
+    cap: ['winter', 'Winter Crown', 'Evolution: pearl core, circular frost rim and snow trail. Frozen kills freeze up to 4 neighbors. +2 direct damage.', { frostBloom: 4, damage: 2 }, 'winter'],
     link: ['icefault', 'Ice Fault', 'maul_fault', 'Rime deals +4 damage to faulted pixels and refreshes their fault duration.', { faultBonus: 4, refreshFault: 1 }],
   },
   { key: 'hail', name: 'Hail', req: 'spd', form: 'hail',
-    desc: 'Choose Hail. Start with 1 pierce; seals off Glacier. Visual: a sharp ice diamond.',
+    desc: 'Choose Hail. Start with 1 pierce; seals off Glacier specialization. Visual: round ice core and twin trails.',
     effects: { pierce: 1, pierceCap: 2 },
     nodes: [
       ['needle', 'Ice Needle', 'Regain 1 pierce every 6 bounces.', { set: { pierceEvery: 6 } }],
       ['coldedge', 'Cold Edge', '+2 direct damage against frozen pixels per rank.', { frozenBonus: 2 }, 2],
       ['splinter', 'Splinter', 'Every 18 bounces, shed a small ice chip. Chips last 18 seconds and cannot reproduce.', { set: { spawnEvery: 18, spawnCount: 1 } }],
       ['sleet', 'Sleet', 'Ice Needle recharges 2 bounces sooner; +1 pierce cap.', { pierceFaster: 2, pierceCap: 1 }],
-      ['glasscut', 'Glass Cutter', 'Direct hits shatter frozen pixels with 12 health or less. Tougher ice takes +4 damage.', { shatterLimit: 12, frozenBonus: 4 }],
+      ['glasscut', 'Glass Cutter', 'Direct hits shatter frozen pixels with 24 health or less. Tougher ice takes +4 damage.', { shatterLimit: 24, frozenBonus: 4 }],
       ['diamond', 'Diamond Dust', 'Chips inherit freezing every hit and last 6 seconds longer.', { chipFrost: 1, fragLife: 6 }],
     ],
-    cap: ['comet', 'Comet Heart', 'Evolution: twin-tailed comet. +20% speed, +2 pierce cap; ice chips deal +2 damage.', { speedBonus: 0.2, pierceCap: 2, fragBonus: 2 }, 'comet'],
+    cap: ['comet', 'Comet Heart', 'Evolution: polished round core and long twin wakes. +20% speed, +2 pierce cap; ice chips deal +2 damage.', { speedBonus: 0.2, pierceCap: 2, fragBonus: 2 }, 'comet'],
     link: ['supercool', 'Supercool', 'drift_charge', 'Rime hits on charged targets freeze every hit and add +3 damage without consuming charge.', { supercool: 1 }],
   },
 ]);
@@ -166,21 +162,21 @@ ballTree('maul', [
   ['spd', 'Stone Skipper', '+8% launch speed per rank.', { speedBonus: 0.08 }],
 ], [
   { key: 'tectonic', name: 'Tectonic', req: 'fault', form: 'tectonic',
-    desc: 'Choose Tectonic. Every fourth bounce crushes 4 neighbors for 1 damage. Seals off Obelisk. Visual: layered stone.',
+    desc: 'Choose Tectonic. Every fourth bounce crushes 4 neighbors for 1 damage. Seals off Obelisk. Visual: round banded stone and dust wake.',
     effects: { splash: 1, set: { crushEvery: 4 } },
     nodes: [
-      ['earthstrike', 'Earth Strike', 'Direct impacts instantly shatter ANY frozen pixel. Crush hits gain +3 damage against ice.', { shatterLimit: 40, areaFrozenBonus: 3 }],
+      ['earthstrike', 'Earth Strike', 'Direct impacts instantly shatter ANY frozen pixel. Crush hits gain +3 damage against ice.', { shatterLimit: CFG.MAX_HEALTH, areaFrozenBonus: 3 }],
       ['tremor', 'Tremor', '+1 crush damage per rank.', { splash: 1 }, 2],
       ['strata', 'Strata', 'Steel ricochets add +1 damage and +3% radius, capped.', { ramp: 1, rampSize: 0.03 }],
       ['faultwave', 'Fault Wave', 'Area hits mark surviving pixels with your Fault Line bonus.', { areaFault: 1 }],
       ['aftershock', 'Aftershock', 'Crush every 2 bounces instead of every 4; crush also hits diagonals.', { set: { crushEvery: 2, splashDiag: true } }],
       ['grounding', 'Grounding', 'A charged direct target discharges in a 1.5-pixel burst for 3 damage. Consumes charge.', { groundBurst: 3 }],
     ],
-    cap: ['worldbreaker', 'Worldbreaker', 'Evolution: orbiting stone plates. Every 10 bounces, a 2-pixel quake deals 3 damage and uses your ice/fault synergies.', { set: { pulseEvery: 10, pulseR: 100, pulseDmg: 3 } }, 'worldbreaker'],
+    cap: ['worldbreaker', 'Worldbreaker', 'Evolution: round molten core and ember-dust wake. Every 10 bounces, a 2-pixel quake deals 3 damage with ice/fault synergies.', { set: { pulseEvery: 10, pulseR: 100, pulseDmg: 3 } }, 'worldbreaker'],
     link: ['avalanche', 'Avalanche', 'arc_frost', 'Shattering a frozen pixel freezes up to 3 neighbors for 5 seconds, setting up the next strike.', { avalanche: 3 }],
   },
   { key: 'obelisk', name: 'Obelisk', req: 'dmg', form: 'obelisk',
-    desc: 'Choose Obelisk. +2 direct damage, -10% speed. Seals off Tectonic. Visual: a carved stone diamond.',
+    desc: 'Choose Obelisk. +2 direct damage, -10% speed. Seals off Tectonic. Visual: round engraved stone with a quiet dust trail.',
     effects: { damage: 2, speedBonus: -0.1 },
     nodes: [
       ['chisel', 'Chisel', '+3 direct damage against faulted pixels per rank.', { faultBonus: 3 }, 2],
@@ -190,7 +186,7 @@ ballTree('maul', [
       ['monolith', 'Monolith', 'Frozen targets take double direct damage after bonuses.', { frozenMult: 1 }],
       ['lodestone', 'Lodestone', 'Charged targets take +5 direct damage; consumes the charge.', { chargeConsume: 5 }],
     ],
-    cap: ['titan', 'Titan Core', 'Evolution: runed monolith. +4 damage; hitting faulted pixels grants one pierce (cap 2).', { damage: 4, faultPierce: 1, pierceCap: 2 }, 'titan'],
+    cap: ['titan', 'Titan Core', 'Evolution: round gold-banded core and mineral wake. +4 damage; hitting faulted pixels grants one pierce (cap 2).', { damage: 4, faultPierce: 1, pierceCap: 2 }, 'titan'],
     link: ['fulcrum', 'Fulcrum', 'drift_charge', 'Charged direct hits discharge a 1.5-pixel burst for 4 damage. Consumes charge.', { groundBurst: 4 }],
   },
 ]);
@@ -215,7 +211,7 @@ ballTree('drift', [
     link: ['faultgrid', 'Fault Grid', 'maul_fault', 'Chains deal +4 damage to faulted pixels.', { areaFaultBonus: 4 }],
   },
   { key: 'rail', name: 'Rail', req: 'focus', form: 'rail',
-    desc: 'Choose Rail. +12% speed; recharge one pierce every 6 bounces. Seals off Storm. Visual: a violet needle.',
+    desc: 'Choose Rail. +12% speed; recharge one pierce every 6 bounces. Seals off Storm. Visual: round violet core and ribbon trails.',
     effects: { speedBonus: 0.12, set: { pierceEvery: 6 } },
     nodes: [
       ['windup', 'Windup', '+2% speed per bounce, up to 1.35x launch speed.', { charge: 0.02, chargeCapBonus: 0.35 }],
@@ -225,7 +221,7 @@ ballTree('drift', [
       ['phase', 'Phase Drive', 'Piercing hits add +2% speed; +0.15x speed cap.', { pierceCharge: 0.02, chargeCapBonus: 0.15 }],
       ['prism', 'Prism Wake', 'Every 20 bounces shed 2 short-lived sparks. Each spark starts with 1 pierce.', { set: { spawnEvery: 20, spawnCount: 2 }, chipPierce: 1 }],
     ],
-    cap: ['lightspeed', 'Aurora Lance', 'Evolution: luminous lance and twin wakes. +20% speed, +2 direct damage, +1 pierce cap.', { speedBonus: 0.2, damage: 2, pierceCap: 1 }, 'lightspeed'],
+    cap: ['lightspeed', 'Aurora Lance', 'Evolution: luminous round core and twin ribbon wakes. +20% speed, +2 direct damage, +1 pierce cap.', { speedBonus: 0.2, damage: 2, pierceCap: 1 }, 'lightspeed'],
     link: ['coldrail', 'Cold Rail', 'arc_frost', 'Direct hits against frozen pixels gain +6 damage and restore 1 pierce.', { frozenBonus: 6, icePierce: 1 }],
   },
 ]);
@@ -250,7 +246,81 @@ const fieldNodes = [
 ];
 for (const [id, name, cost, max, req, x, y, desc, extra] of fieldNodes)
   addTech(id, 'field', name, cost, max, [req], x, y, desc, {}, extra);
+// New side branches and late return routes preserve all existing purchases.
+function sideNode(tree, key, name, req, x, y, desc, effects, extra = {}) {
+  addTech(tree === 'field' ? key : tree + '_' + key, tree, name, extra.cost || 3, extra.maxLevel || 1,
+    req, x, y, desc, effects, extra);
+}
+function exclusiveSides(tree, a, b) {
+  const prefix = tree === 'field' ? '' : tree + '_';
+  a.excludes = [prefix + b.key]; b.excludes = [prefix + a.key];
+  for (const item of [a, b]) sideNode(tree, item.key, item.name, item.req, item.x, 850,
+    item.desc, item.effects, { excludes: item.excludes, tag: 'CHOICE' });
+}
+sideNode('arc', 'powder', 'Powder Snow', ['arc_duration'], 110, 110, '+4 freeze seconds; a snowy wake even before specialization.', { freezeDuration: 4, set: { trailStyle: 'snow' } });
+sideNode('arc', 'coldblood', 'Cold Memory', ['arc_frost'], 110, 650, 'Direct hits refresh existing frost to your current freeze duration.', { refreshFreeze: 1 });
+exclusiveSides('arc',
+  { key: 'stillwater', name: 'Stillwater', req: ['arc_frost'], x: 330, desc: '+3 damage against ice and +4 freeze seconds. Blocks White Wind.', effects: { frozenBonus: 3, freezeDuration: 4 } },
+  { key: 'whitewind', name: 'White Wind', req: ['arc_spd'], x: 560, desc: '+20% speed and aurora trails. Blocks Stillwater.', effects: { speedBonus: 0.2, set: { trailStyle: 'aurora' } } });
+sideNode('arc', 'blackice', 'Black Ice', ['arc_stillwater'], 800, 850, 'Shatter ice at 24 HP or less; +2 damage against tougher ice.', { shatterLimit: 24, frozenBonus: 2 });
+sideNode('arc', 'snowrunner', 'Snow Runner', ['arc_whitewind'], 1040, 850, 'Direct kills restore 1 pierce; +2 pierce cap.', { onKillPierce: 1, pierceCap: 2 });
+sideNode('arc', 'thawgate', 'Thaw Passage', ['arc_winter'], 1510, 110, 'RETURN ROUTE: reopen Ice Needle and Cold Edge from Hail. +1 starting pierce and cap. Hail specialization stays sealed.', { pierce: 1, pierceCap: 1 }, { cost: 5, tag: 'GATEWAY' });
+sideNode('arc', 'glacialgate', 'Glacial Passage', ['arc_comet'], 1510, 650, 'RETURN ROUTE: reopen Snowglobe and Brittle from Glacier. Freeze one more neighbor. Glacier specialization stays sealed.', { freezeSpread: 1 }, { cost: 5, tag: 'GATEWAY' });
+sideNode('arc', 'horizon', 'Boreal Horizon', ['arc_thawgate'], 1760, 110, 'Aurora ribbons, +6% speed and +1 pierce cap.', { speedBonus: 0.06, pierceCap: 1, set: { trailStyle: 'aurora' } });
+sideNode('arc', 'rings', 'Snow Rings', ['arc_glacialgate', 'arc_snowpulse'], 1760, 650, '+0.5 pixels of pulse radius and +1 pulse damage.', { pulseRadius: 25, pulseDmg: 1 });
+sideNode('arc', 'bloom', 'Crystal Garden', ['arc_winter'], 1760, 310, 'Either evolution: frozen kills freeze 2 additional neighbors.', { frostBloom: 2 }, { routes: [[{ id: 'arc_comet', lvl: 1 }]] });
+sideNode('arc', 'thawburst', 'Thaw Echo', ['arc_icefault'], 1760, 450, 'Either cross-ball capstone: frozen direct kills release a 1.2-pixel burst for 2 damage.', { thawBurst: 2 }, { routes: [[{ id: 'arc_supercool', lvl: 1 }]] });
+
+sideNode('maul', 'sediment', 'Sediment', ['maul_dmg'], 110, 110, '+2 direct damage to pixels in brown soil patches.', { soilBonus: 2 });
+sideNode('maul', 'weathering', 'Weathering', ['maul_fault'], 110, 650, '+2 direct damage to targets below half their original health.', { woundedBonus: 2 });
+exclusiveSides('maul',
+  { key: 'deepcore', name: 'Deep Core', req: ['maul_dmg'], x: 330, desc: '+3 direct damage, -8% speed. Blocks Branching Fault.', effects: { damage: 3, speedBonus: -0.08 } },
+  { key: 'widefault', name: 'Branching Fault', req: ['maul_fault'], x: 560, desc: '+1 fault bonus; newly applied direct faults spread to one neighbor. Blocks Deep Core.', effects: { faultPower: 1, faultSpread: 1 } });
+sideNode('maul', 'pressure', 'Pressure Chamber', ['maul_deepcore'], 800, 850, '+4 damage against targets below half health.', { woundedBonus: 4 });
+sideNode('maul', 'echo', 'Echo Strike', ['maul_widefault'], 1040, 850, 'Every eighth direct hit emits a 1.2-pixel burst for 2 damage.', { echoStrikeEvery: 8, echoStrikeDmg: 2 });
+sideNode('maul', 'bedrockgate', 'Bedrock Passage', ['maul_worldbreaker'], 1510, 110, 'RETURN ROUTE: reopen Chisel and Ice Pick from Obelisk. +2 direct damage. Obelisk specialization stays sealed.', { damage: 2 }, { cost: 5, tag: 'GATEWAY' });
+sideNode('maul', 'faultgate', 'Fault Passage', ['maul_titan'], 1510, 650, 'RETURN ROUTE: reopen Earth Strike and Tremor. Gain a 1-damage crush every fourth bounce. Tectonic specialization stays sealed.', { splash: 1, set: { crushEvery: 4 } }, { cost: 5, tag: 'GATEWAY' });
+sideNode('maul', 'fossil', 'Fossil Record', ['maul_bedrockgate'], 1760, 110, '+3 damage against faulted pixels and +2 to brown-patch pixels.', { faultBonus: 3, soilBonus: 2 });
+sideNode('maul', 'undertow', 'Undertow', ['maul_faultgate'], 1760, 650, 'Crushes gain +2 damage against ice and +2 against faults.', { areaFrozenBonus: 2, areaFaultBonus: 2 });
+sideNode('maul', 'sunder', 'Sunder', ['maul_worldbreaker'], 1760, 310, 'Either evolution: direct kills restore 1 pierce; +2 pierce cap.', { onKillPierce: 1, pierceCap: 2 }, { routes: [[{ id: 'maul_titan', lvl: 1 }]] });
+sideNode('maul', 'mantle', 'Charged Mantle', ['maul_avalanche'], 1760, 450, 'Either cross-ball capstone: charged direct impacts gain a 2-damage grounding burst, or add +2 to an existing burst.', { groundBurst: 2 }, { routes: [[{ id: 'maul_fulcrum', lvl: 1 }]] });
+
+sideNode('drift', 'ioncoat', 'Ion Coat', ['drift_charge'], 110, 110, '+4 charge seconds and a fine ion wake.', { chargeDuration: 4, set: { trailStyle: 'ion' } });
+sideNode('drift', 'overdrive', 'Gentle Overdrive', ['drift_spd'], 110, 650, '+6% launch speed per rank.', { speedBonus: 0.06 }, { maxLevel: 2, cost: 2 });
+exclusiveSides('drift',
+  { key: 'polarity', name: 'Polarity', req: ['drift_charge'], x: 330, desc: '+3 direct damage against charge and +1 chain damage. Blocks Free Current.', effects: { chargedBonus: 3, chainDamage: 1 } },
+  { key: 'velocity', name: 'Free Current', req: ['drift_spd'], x: 560, desc: '+18% speed and +1 pierce cap. Blocks Polarity.', effects: { speedBonus: 0.18, pierceCap: 1 } });
+sideNode('drift', 'capbank', 'Capacitor Bank', ['drift_polarity'], 800, 850, 'Charged direct targets discharge a 2-damage burst; consumes charge.', { groundBurst: 2 });
+sideNode('drift', 'slipcoil', 'Slip Coil', ['drift_velocity'], 1040, 850, 'Direct kills restore 1 pierce; +1 pierce cap.', { onKillPierce: 1, pierceCap: 1 });
+sideNode('drift', 'switchyard', 'Switchyard', ['drift_tempest'], 1510, 110, 'RETURN ROUTE: reopen Windup and Tracer from Rail. +1 starting pierce and cap. Rail specialization stays sealed.', { pierce: 1, pierceCap: 1 }, { cost: 5, tag: 'GATEWAY' });
+sideNode('drift', 'cloudgate', 'Cloud Passage', ['drift_lightspeed', 'drift_charge'], 1510, 650, 'RETURN ROUTE: reopen Arc Wire and Ice Conductor from Storm. Charge lasts +4 seconds. Storm specialization stays sealed.', { chargeDuration: 4 }, { cost: 5, tag: 'GATEWAY' });
+sideNode('drift', 'flywheel', 'Flywheel', ['drift_switchyard', 'drift_windup'], 1760, 110, '+0.2x speed cap; long ribbon trails.', { chargeCapBonus: 0.2, set: { trailStyle: 'ribbon' } });
+sideNode('drift', 'skybridge', 'Sky Bridge', ['drift_cloudgate', 'drift_arcwire'], 1760, 650, '+1 chain damage and +1 pixel chain reach.', { chainDamage: 1, chainRadius: 1 });
+sideNode('drift', 'reclaim', 'Energy Return', ['drift_tempest'], 1760, 310, 'Either evolution: direct kills restore 1 pierce; +1 pierce cap.', { onKillPierce: 1, pierceCap: 1 }, { routes: [[{ id: 'drift_lightspeed', lvl: 1 }]] });
+sideNode('drift', 'echo', 'Pulse Engine', ['drift_faultgrid'], 1760, 450, 'Either cross-ball capstone: every tenth direct hit emits a 1.2-pixel burst for 2 damage.', { echoStrikeEvery: 10, echoStrikeDmg: 2 }, { routes: [[{ id: 'drift_coldrail', lvl: 1 }]] });
+
+exclusiveSides('field',
+  { key: 'surveyor', name: 'Surveyor', req: ['yield'], x: 330, desc: '+20% pixel currency. Blocks Reaction Economy.', effects: {} },
+  { key: 'recycler', name: 'Reaction Economy', req: ['salvage'], x: 560, desc: '+4 currency per direct status-reaction kill. Blocks Surveyor.', effects: {} });
+exclusiveSides('field',
+  { key: 'relaynet', name: 'Relay Network', req: ['duration'], x: 800, desc: '+4 seconds to all new coatings. Blocks Hard Impact.', effects: {} },
+  { key: 'hardimpact', name: 'Hard Impact', req: ['damage'], x: 1040, desc: '+2 primary direct damage. Blocks Relay Network.', effects: {} });
+sideNode('field', 'pacing', 'Supply Rhythm', ['discount'], 1510, 140, 'Demand surcharges cool 25% faster.', {});
+sideNode('field', 'weave', 'Harmonic Weave', ['echo'], 1510, 590, '+1 pulse damage, +0.3 pixels pulse radius, and +1 chain damage for primary balls.', {}, { routes: [[{ id: 'precision', lvl: 1 }]] });
+sideNode('field', 'reunion', 'Reunion', ['convergence'], 1510, 365, 'RETURN ROUTE: reopen Echo Chamber and Precision Tools regardless of your launch choice. The other launch specialization stays sealed.', {}, { cost: 5, tag: 'GATEWAY' });
+sideNode('field', 'reactor', 'Closed Circuit', ['balance'], 1510, 690, '+3 currency per direct status-reaction kill.', {});
+sideNode('field', 'confluence', 'Confluence', ['relaynet'], 1760, 365, 'Either shared combat choice: +1 direct damage and +2 coating seconds.', {}, { cost: 5, routes: [[{ id: 'hardimpact', lvl: 1 }]] });
+
 const TECH_BY_ID = Object.fromEntries(TECH_NODES.map(n => [n.id, n]));
+for (const [gateway, targets] of [
+  ['arc_thawgate', ['arc_needle', 'arc_coldedge']], ['arc_glacialgate', ['arc_snowpulse', 'arc_brittle']],
+  ['maul_bedrockgate', ['maul_chisel', 'maul_icepick']], ['maul_faultgate', ['maul_earthstrike', 'maul_tremor']],
+  ['drift_switchyard', ['drift_windup', 'drift_tracer']], ['drift_cloudgate', ['drift_arcwire', 'drift_conductor']],
+  ['reunion', ['echo', 'precision']],
+]) {
+  TECH_BY_ID[gateway].reopens = targets;
+  for (const id of targets) (TECH_BY_ID[id].routes ||= []).push([{ id: gateway, lvl: 1 }]);
+}
 
 // Old trees cannot map fairly onto mutually exclusive specializations.
 // Refund historical rank prices while preserving the field and economy.

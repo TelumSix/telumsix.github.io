@@ -5,6 +5,6 @@
   "description": "Drag-to-shoot destruction game across a million-pixel field",
   "scripts": {
     "start": "node server.js",
-    "test": "node test/smoke.mjs && node test/progression.mjs"
+    "test": "node test/smoke.mjs && node test/progression.mjs && node test/audio.mjs"
   }
 }

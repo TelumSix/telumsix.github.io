@@ -1,68 +1,60 @@
 'use strict';
 
-// Shared silhouettes for the field, cached sprites, and evolution previews.
+// Every core stays a circle. Evolutions decorate its surface and wake.
 function drawBallForm(ctx, x, y, radius, form, color, angle = 0) {
   ctx.save();
   ctx.translate(x, y);
-  ctx.rotate(angle);
   ctx.fillStyle = color;
-  ctx.strokeStyle = color;
-  ctx.lineWidth = Math.max(1, radius * 0.2);
-  const polygon = (points, outer, inner = outer) => {
-    ctx.beginPath();
-    for (let i = 0; i < points; i++) {
-      const a = i * TAU / points;
-      const r = i % 2 ? inner : outer;
-      if (i) ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
-      else ctx.moveTo(Math.cos(a) * r, Math.sin(a) * r);
-    }
-    ctx.closePath();
-    ctx.fill();
-  };
+  ctx.beginPath();
+  ctx.arc(0, 0, radius, 0, TAU);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+  ctx.lineWidth = Math.max(0.65, radius * 0.12);
   const evolved = ['winter', 'comet', 'worldbreaker', 'titan', 'tempest', 'lightspeed'].includes(form);
-  if (form === 'glacier' || form === 'winter') polygon(12, radius * 1.25, radius * 0.48);
-  else if (['hail', 'comet', 'rail', 'lightspeed'].includes(form)) {
+  if (['glacier', 'winter', 'hail', 'comet'].includes(form)) {
     ctx.beginPath();
-    ctx.moveTo(radius * 1.6, 0);
-    ctx.lineTo(-radius * 0.7, -radius * 0.65);
-    ctx.lineTo(-radius * 0.2, 0);
-    ctx.lineTo(-radius * 0.7, radius * 0.65);
-    ctx.closePath();
-    ctx.fill();
-    if (evolved) {
-      ctx.beginPath();
-      ctx.moveTo(-radius, -radius * 0.5); ctx.lineTo(-radius * 2.4, -radius * 0.8);
-      ctx.moveTo(-radius, radius * 0.5); ctx.lineTo(-radius * 2.4, radius * 0.8);
-      ctx.stroke();
-    }
-  } else if (['tectonic', 'worldbreaker', 'obelisk', 'titan'].includes(form)) {
-    polygon(form === 'obelisk' || form === 'titan' ? 4 : 6, radius * 1.1);
-    ctx.strokeStyle = '#51443c';
-    ctx.beginPath();
-    ctx.moveTo(-radius * 0.5, -radius * 0.1);
-    ctx.lineTo(0, radius * 0.3);
-    ctx.lineTo(radius * 0.55, -radius * 0.4);
+    ctx.arc(0, 0, radius * 0.72, 0.3, 4.7);
     ctx.stroke();
-  } else {
+    ctx.fillStyle = '#e4faff';
     ctx.beginPath();
-    ctx.arc(0, 0, radius * 0.6, 0, TAU);
+    ctx.arc(radius * 0.25, radius * 0.15, radius * 0.22, 0, TAU);
     ctx.fill();
+  } else if (['tectonic', 'worldbreaker', 'obelisk', 'titan'].includes(form)) {
+    ctx.strokeStyle = 'rgba(75,49,30,0.65)';
+    ctx.lineWidth = Math.max(1, radius * 0.18);
     ctx.beginPath();
-    ctx.arc(0, 0, radius * 1.15, 0.3, TAU - 0.3);
+    ctx.arc(0, 0, radius * 0.62, 0.2, 2.8);
+    ctx.arc(0, 0, radius * 0.35, 3.2, 5.6);
+    ctx.stroke();
+  } else if (form !== 'seed') {
+    ctx.strokeStyle = '#f5e9ff';
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * 0.65, -0.4, 2);
+    ctx.arc(0, 0, radius * 0.42, 2.4, 4.7);
     ctx.stroke();
   }
   if (evolved) {
     ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(0.8, radius * 0.12);
+    ctx.lineWidth = Math.max(0.7, radius * 0.1);
     ctx.beginPath();
-    ctx.ellipse(0, 0, radius * 1.65, radius * 1.25, 0.5, 0, TAU);
+    ctx.arc(0, 0, radius * 1.28, 0, TAU);
     ctx.stroke();
-    if (form === 'worldbreaker') {
-      ctx.fillRect(-radius * 1.8, -radius * 0.4, radius * 0.45, radius * 0.7);
-      ctx.fillRect(radius * 1.4, -radius * 0.4, radius * 0.45, radius * 0.7);
-    }
   }
+  ctx.fillStyle = 'rgba(255,255,255,0.72)';
+  ctx.beginPath();
+  ctx.arc(-radius * 0.28, -radius * 0.3, radius * 0.24, 0, TAU);
+  ctx.fill();
   ctx.restore();
+}
+
+function ballTrailStyle(b) {
+  if (b.rules && b.rules.trailStyle) return b.rules.trailStyle;
+  if (['glacier', 'winter'].includes(b.form)) return 'snow';
+  if (['hail', 'comet'].includes(b.form)) return 'twin';
+  if (['tectonic', 'worldbreaker', 'obelisk', 'titan'].includes(b.form)) return 'dust';
+  if (['storm', 'tempest'].includes(b.form)) return 'ion';
+  if (['rail', 'lightspeed'].includes(b.form)) return 'ribbon';
+  return 'soft';
 }
 
 const TAU = Math.PI * 2;

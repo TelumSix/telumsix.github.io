@@ -1,44 +1,31 @@
 'use strict';
 
-/**
- * Small synth. Everything is generated, no assets.
- * Three volume buses: master, effects (shots / explosions) and chimes
- * (pixel hits, shards, UI). A soft feedback delay sits on the chime bus.
- */
+// A small, bounded ensemble: one shared C-major palette, soft attacks,
+// density-aware gains and a musical clock that coalesces busy impacts.
 class Sfx {
   constructor() {
     this.enabled = true;
-    try { this.enabled = localStorage.getItem(CFG.MUTE_KEY) !== '1'; } catch (e) { /* ignore */ }
-
-    this.volumes = { master: 0.7, fx: 0.8, chime: 0.9 };
+    this.volumes = { master: 0.55, fx: 0.65, chime: 0.5 };
     try {
-      const raw = localStorage.getItem(CFG.VOLUME_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === 'object') {
-          for (const k of ['master', 'fx', 'chime']) {
-            const v = Number(parsed[k]);
-            if (isFinite(v)) this.volumes[k] = clamp(v, 0, 1);
-          }
-        }
+      this.enabled = localStorage.getItem(CFG.MUTE_KEY) !== '1';
+      const saved = JSON.parse(localStorage.getItem(CFG.VOLUME_KEY) || '{}');
+      for (const key of Object.keys(this.volumes)) {
+        if (saved[key] != null && Number.isFinite(Number(saved[key])))
+          this.volumes[key] = clamp(Number(saved[key]), 0, 1);
       }
-    } catch (e) { /* ignore */ }
-
+    } catch (_) { /* Storage is optional. */ }
     this.ctx = null;
-    this.master = null;
-    this.fxBus = null;
-    this.chimeBus = null;
-    this.delay = null;
-    this.noiseBuf = null;
-    this.lastHit = 0;
-    this.lastComboTime = 0;
-    this.combo = 0;
-    this.lastShard = 0;
-    this.lastBounce = 0;
+    this.voices = new Set();
+    this.pending = { hits: 0, walls: 0, bounces: 0 };
+    this.last = Object.create(null);
+    this.nextBeat = 0;
+    this.noteIndex = 0;
+    this.notes = [261.6256, 329.6276, 391.9954, 523.2511];
+    this.pattern = [0, 2, 1, 3, 1, 2, 0, 1];
   }
 
   saveVolumes() {
-    try { localStorage.setItem(CFG.VOLUME_KEY, JSON.stringify(this.volumes)); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(CFG.VOLUME_KEY, JSON.stringify(this.volumes)); } catch (_) { /* optional */ }
   }
 
   ensure() {
@@ -46,201 +33,159 @@ class Sfx {
     if (!this.ctx) {
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
-      try {
-        this.ctx = new AC();
-      } catch (e) {
-        return null;
-      }
+      try { this.ctx = new AC(); } catch (_) { return null; }
       const ctx = this.ctx;
-
       this.master = ctx.createGain();
-      this.master.gain.value = this.enabled ? this.volumes.master : 0;
+      this.master.gain.value = this.volumes.master;
+      this.filter = ctx.createBiquadFilter();
+      this.filter.type = 'lowpass';
+      this.filter.frequency.value = 2400;
+      this.filter.Q.value = 0.5;
+      this.compressor = ctx.createDynamicsCompressor();
+      this.compressor.threshold.value = -22;
+      this.compressor.knee.value = 18;
+      this.compressor.ratio.value = 6;
+      this.compressor.attack.value = 0.015;
+      this.compressor.release.value = 0.22;
+      this.filter.connect(this.compressor);
+      this.compressor.connect(this.master);
       this.master.connect(ctx.destination);
-
       this.fxBus = ctx.createGain();
       this.fxBus.gain.value = this.volumes.fx;
-      this.fxBus.connect(this.master);
-
+      this.fxBus.connect(this.filter);
       this.chimeBus = ctx.createGain();
       this.chimeBus.gain.value = this.volumes.chime;
-      this.chimeBus.connect(this.master);
-
-      // delay bus fed by chimes
-      const delay = ctx.createDelay(0.6);
-      delay.delayTime.value = 0.185;
-      const send = ctx.createGain();
-      send.gain.value = 0.3;
-      const damp = ctx.createBiquadFilter();
-      damp.type = 'lowpass';
-      damp.frequency.value = 2600;
-      const fb = ctx.createGain();
-      fb.gain.value = 0.26;
-      const wet = ctx.createGain();
-      wet.gain.value = 0.5;
-      this.chimeBus.connect(send);
-      send.connect(delay);
-      delay.connect(damp);
-      damp.connect(fb);
-      fb.connect(delay);
-      damp.connect(wet);
-      wet.connect(this.master);
-      this.delay = delay;
+      this.chimeBus.connect(this.filter);
+      // One quiet, damped repeat; no feedback loop that can accumulate.
+      this.delay = ctx.createDelay(0.5);
+      this.delay.delayTime.value = 0.27;
+      this.wet = ctx.createGain();
+      this.wet.gain.value = 0.09;
+      this.chimeBus.connect(this.delay);
+      this.delay.connect(this.wet);
+      this.wet.connect(this.filter);
     }
     if (this.ctx.state === 'suspended') this.ctx.resume().catch(() => {});
     return this.ctx;
   }
 
   setVolume(name, value) {
+    if (!(name in this.volumes)) return;
     this.volumes[name] = clamp(value, 0, 1);
     this.saveVolumes();
     if (!this.ctx) return;
-    const t = this.ctx.currentTime;
-    if (name === 'master') {
-      this.master.gain.setTargetAtTime(this.enabled ? this.volumes.master : 0, t, 0.03);
-    } else if (name === 'fx') {
-      this.fxBus.gain.setTargetAtTime(this.volumes.fx, t, 0.03);
-    } else if (name === 'chime') {
-      this.chimeBus.gain.setTargetAtTime(this.volumes.chime, t, 0.03);
-    }
+    const node = name === 'master' ? this.master : name === 'fx' ? this.fxBus : this.chimeBus;
+    node.gain.setTargetAtTime(name === 'master' && !this.enabled ? 0 : this.volumes[name], this.ctx.currentTime, 0.04);
   }
 
   setEnabled(on) {
-    this.enabled = on;
-    try { localStorage.setItem(CFG.MUTE_KEY, on ? '0' : '1'); } catch (e) { /* ignore */ }
+    this.enabled = !!on;
+    try { localStorage.setItem(CFG.MUTE_KEY, on ? '0' : '1'); } catch (_) { /* optional */ }
     if (this.master) {
-      const t = this.ctx.currentTime;
-      this.master.gain.cancelScheduledValues(t);
-      this.master.gain.setTargetAtTime(on ? this.volumes.master : 0.0001, t, 0.03);
+      this.master.gain.cancelScheduledValues(this.ctx.currentTime);
+      this.master.gain.setTargetAtTime(on ? this.volumes.master : 0, this.ctx.currentTime, 0.03);
     }
-    if (on) this.ensure();
+    if (!on) {
+      this.pending = { hits: 0, walls: 0, bounces: 0 };
+      for (const voice of [...this.voices]) {
+        voice.osc.stop();
+        voice.clean();
+      }
+    } else this.ensure();
   }
 
-  tone(freq, dur, type, vol, slideTo, bus) {
-    const ctx = this.ensure();
-    if (!ctx) return;
-    const t = ctx.currentTime + 0.001;
-    const o = ctx.createOscillator();
-    const g = ctx.createGain();
-    o.type = type;
-    o.frequency.setValueAtTime(freq, t);
-    if (slideTo) {
-      o.frequency.exponentialRampToValueAtTime(Math.max(24, slideTo), t + dur);
-    }
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), t + 0.006);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g);
-    g.connect(bus === 'fx' ? this.fxBus : this.chimeBus);
-    o.start(t);
-    o.stop(t + dur + 0.03);
+  allow(kind, interval) {
+    if (!this.enabled) return false;
+    const now = performance.now() / 1000;
+    if (now - (this.last[kind] ?? -Infinity) < interval) return false;
+    this.last[kind] = now;
+    return true;
   }
 
-  noise(dur, vol, cutoff, sweepTo) {
+  tone(freq, duration, type = 'sine', volume = 0.025, slideTo = null, bus = 'chime', offset = 0, priority = false) {
     const ctx = this.ensure();
-    if (!ctx) return;
-    if (!this.noiseBuf) {
-      const len = Math.floor(ctx.sampleRate * 0.5);
-      const buf = ctx.createBuffer(1, len, ctx.sampleRate);
-      const d = buf.getChannelData(0);
-      for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
-      this.noiseBuf = buf;
+    if (!ctx || (!priority && this.voices.size >= 8)) return;
+    if (this.voices.size >= 12) {
+      const old = [...this.voices].find(v => !v.priority);
+      if (!old) return;
+      old.osc.stop();
+      old.clean();
     }
-    const t = ctx.currentTime + 0.001;
-    const src = ctx.createBufferSource();
-    src.buffer = this.noiseBuf;
-    const f = ctx.createBiquadFilter();
-    f.type = 'lowpass';
-    f.frequency.setValueAtTime(cutoff, t);
-    if (sweepTo) f.frequency.exponentialRampToValueAtTime(Math.max(60, sweepTo), t + dur);
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(vol, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f);
-    f.connect(g);
-    g.connect(this.fxBus);
-    src.start(t);
-    src.stop(t + dur + 0.02);
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    const start = ctx.currentTime + 0.006 + offset;
+    const peak = Math.max(0.0002, volume / Math.sqrt(1 + this.voices.size * 0.4));
+    osc.type = type === 'square' || type === 'sawtooth' ? 'sine' : type;
+    osc.frequency.setValueAtTime(freq, start);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(32, slideTo), start + duration);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(peak, start + Math.min(0.025, duration * 0.22));
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+    osc.connect(gain);
+    gain.connect(bus === 'fx' ? this.fxBus : this.chimeBus);
+    const voice = { osc, priority, clean: () => {
+      if (!this.voices.delete(voice)) return;
+      osc.disconnect();
+      gain.disconnect();
+    } };
+    this.voices.add(voice);
+    osc.onended = voice.clean;
+    osc.start(start);
+    osc.stop(start + duration + 0.02);
+  }
+
+  hit() { if (this.enabled) this.pending.hits = Math.min(4096, this.pending.hits + 1); }
+  wall() { if (this.enabled) this.pending.walls = Math.min(4096, this.pending.walls + 1); }
+  bounce() { if (this.enabled) this.pending.bounces = Math.min(4096, this.pending.bounces + 1); }
+
+  update() {
+    if (!this.enabled || !this.ctx || this.ctx.state !== 'running') {
+      this.pending = { hits: 0, walls: 0, bounces: 0 };
+      return;
+    }
+    const now = this.ctx.currentTime;
+    if (now < this.nextBeat) return;
+    this.nextBeat = now + 0.18;
+    const p = this.pending;
+    this.pending = { hits: 0, walls: 0, bounces: 0 };
+    if (p.hits) {
+      const pitch = this.notes[this.pattern[this.noteIndex++ % this.pattern.length]];
+      const volume = 0.028 / (1 + Math.log2(1 + p.hits) * 0.18);
+      this.tone(pitch, 0.34, 'sine', volume);
+    } else if (p.walls && this.allow('wall', 0.54)) {
+      this.tone(130.8128, 0.16, 'sine', 0.014, null, 'fx');
+    } else if (p.bounces && this.allow('bounce', 0.54)) {
+      this.tone(195.9977, 0.2, 'sine', 0.016, null, 'fx');
+    }
   }
 
   shoot(def) {
-    if (!this.enabled) return;
-    const base = def.id === 'maul' ? 180 : def.id === 'drift' ? 760 : 520;
-    this.tone(base, 0.09, 'triangle', 0.045, base * 0.4, 'fx');
-    this.noise(0.05, 0.02, 2400, 700);
+    if (!this.allow('shoot', 0.1)) return;
+    const pitch = def.id === 'maul' ? 130.8128 : def.id === 'drift' ? 391.9954 : 261.6256;
+    this.tone(pitch, 0.18, 'sine', 0.026, null, 'fx');
   }
-
-  /** Pentatonic chime that climbs while you sustain destruction. */
-  hit() {
-    if (!this.enabled) return;
-    const now = performance.now();
-    if (now - this.lastHit < 48) return;
-    this.lastHit = now;
-    if (now - this.lastComboTime > 520) this.combo = 0;
-    else this.combo = Math.min(18, this.combo + 1);
-    this.lastComboTime = now;
-
-    const scale = [0, 2, 4, 7, 9, 12, 14, 16, 19, 21];
-    const step = scale[this.combo % scale.length] + 12 * Math.floor(this.combo / scale.length);
-    const freq = 392 * Math.pow(2, step / 12);
-    const vol = 0.035 + Math.min(0.02, this.combo * 0.0012);
-    this.tone(freq, 0.16, 'sine', vol, null, 'chime');
-    this.tone(freq * 2, 0.07, 'triangle', vol * 0.35, null, 'chime');
-  }
-
-  wall() {
-    if (!this.enabled) return;
-    const now = performance.now();
-    if (now - this.lastHit < 60) return;
-    this.lastHit = now;
-    this.tone(1500 + Math.random() * 600, 0.045, 'square', 0.018, 900, 'fx');
-  }
-
-  /** Soft elastic tick; only heard occasionally even with thousands of balls. */
-  bounce(streak) {
-    if (!this.enabled) return;
-    const now = performance.now();
-    if (now - this.lastBounce < 95) return;
-    this.lastBounce = now;
-    const pitch = 240 + Math.min(500, (streak || 0) * 8);
-    this.tone(pitch, 0.055, 'sine', 0.026, pitch * 1.35, 'fx');
-  }
-
   explode(big) {
-    if (!this.enabled) return;
-    this.noise(big ? 0.55 : 0.3, big ? 0.3 : 0.16, 1400, 120);
-    this.tone(90, big ? 0.42 : 0.24, 'sine', big ? 0.22 : 0.12, 40, 'fx');
+    if (!this.allow('explode', 0.36)) return;
+    this.tone(65.4064, big ? 0.65 : 0.4, 'sine', big ? 0.06 : 0.04, null, 'fx');
+    this.tone(130.8128, 0.28, 'triangle', 0.018, null, 'fx');
   }
-
   shard() {
-    if (!this.enabled) return;
-    const now = performance.now();
-    if (now - this.lastShard < 90) return;
-    this.lastShard = now;
-    this.tone(880, 0.5, 'sine', 0.1, 1320, 'chime');
-    this.tone(1320, 0.65, 'sine', 0.06, null, 'chime');
-    this.tone(1760, 0.3, 'triangle', 0.035, null, 'chime');
+    if (!this.allow('shard', 0.4)) return;
+    this.tone(523.2511, 0.55, 'sine', 0.045, null, 'chime', 0, true);
+    this.tone(659.2551, 0.5, 'sine', 0.026, null, 'chime', 0.09, true);
   }
-
   buy() {
-    if (!this.enabled) return;
-    this.tone(523.25, 0.12, 'triangle', 0.06, null, 'chime');
-    setTimeout(() => this.tone(659.25, 0.14, 'triangle', 0.06, null, 'chime'), 80);
-    setTimeout(() => this.tone(783.99, 0.22, 'triangle', 0.055, null, 'chime'), 160);
+    if (!this.allow('buy', 0.2)) return;
+    [261.6256, 329.6276, 391.9954].forEach((f, i) => this.tone(f, 0.38, 'sine', 0.035, null, 'chime', i * 0.09, true));
   }
-
   click() {
-    if (!this.enabled) return;
-    this.tone(700, 0.04, 'sine', 0.025, 500, 'chime');
+    if (this.allow('click', 0.1)) this.tone(329.6276, 0.1, 'sine', 0.018, null, 'chime', 0, true);
   }
-
   error() {
-    if (!this.enabled) return;
-    this.tone(190, 0.14, 'square', 0.035, 120, 'chime');
+    if (this.allow('error', 0.3)) this.tone(164.8138, 0.18, 'sine', 0.025, null, 'chime', 0, true);
   }
-
   win() {
-    if (!this.enabled) return;
-    const notes = [523.25, 659.25, 783.99, 1046.5, 1318.5];
-    notes.forEach((f, i) => setTimeout(() => this.tone(f, 0.5, 'triangle', 0.06, null, 'chime'), i * 110));
+    if (!this.allow('win', 1)) return;
+    [261.6256, 329.6276, 391.9954, 523.2511, 659.2551].forEach((f, i) =>
+      this.tone(f, 0.7, 'sine', 0.04, null, 'chime', i * 0.18, true));
   }
 }

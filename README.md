@@ -34,10 +34,11 @@ npm test         # world generation / fog / physics / save round-trip checks
 
 * A pixel is **five ball diameters** wide. The field is a 1000 × 1000 grid.
 * **Every cell is a pixel** except a small starting arena (~290 cells). Pixels are
-  either breakable or **steel** (white). Every undamaged breakable pixel is the
-  same neutral grey; losing health heats it yellow → orange → red. Health is
-  1–40 and climbs with distance from the starting arena: the centre is fragile,
-  the outer edges are the toughest.
+  either breakable or **steel** (white). Undamaged breakable pixels are
+  grey stone or brown soil in scattered patches. The first damaging hit reveals
+  an absolute HP colour: violet/blue at high health, through green and yellow
+  to orange/red at low health. Equal remaining HP has the same base colour.
+  Health is doubled, up to 80 HP; shards now have 2 HP.
 * **Primary balls never stop.** Rounds ricochet off pixels and steel forever.
   They start at 1–2 damage with no free area damage, pierce or damage growth.
   Growth and special powers require upgrades. Fragments expire after 18 seconds
@@ -78,12 +79,22 @@ direction comes from the drag.
 
 ## Tech
 
-Four trees hold **81 purchasable upgrades**: 22 per ball and 15 shared Field
+Four trees hold **126 purchasable upgrades**: 34 per ball and 24 shared Field
 upgrades. Each ball has four foundations, two mutually exclusive specializations,
 six supporting nodes and an evolution per specialization, and two cross-ball
 capstones. Choose Glacier **or** Hail, Tectonic **or** Obelisk, Storm **or** Rail.
-The rival branch and its descendants become sealed. Field also offers a choice
-between Twin Launch and Focused Launch.
+The rival specialization stays sealed. Seven late gateways reopen selected
+rival talents through explicit alternate prerequisites; those borrowed talents
+and their dependent upgrades survive saves. For example, Winter Crown can
+reach Thaw Passage and return to Ice Needle; Aurora Lance can use Cloud Passage
+to learn Arc Wire. Reunion reconnects the two Field support paths without
+granting the other launch specialization.
+
+Additional choices include Stillwater versus White Wind, Deep Core versus
+Branching Fault, Polarity versus Free Current, Surveyor versus Reaction Economy,
+and Relay Network versus Hard Impact. Nonexclusive upgrades add soil damage,
+refreshing frost, wound bonuses, spreading faults, pierce from kills, and
+periodic direct-hit echoes.
 
 Some combinations:
 
@@ -100,13 +111,14 @@ Some combinations:
 * **Hail / Rail:** rechargeable pierce, ice chips, speed from steel, and
   pierce-driven acceleration offer focused alternatives to area builds.
 
-Glacier crystals, Hail diamonds, layered stone, carved obelisks, Storm rings and
-Rail needles replace the starting orbs. Six evolutions add crowns, orbiting
-plates, halos or twin wakes. The field, tree previews and dock reflect upgrades.
-Cached silhouettes remain active at high ball counts.
+Balls **always remain round**. Frost rims, stone bands, engraved surfaces and
+electric arcs decorate circular cores. Upgrades add snow, dust, ion, twin,
+ribbon or aurora wakes that follow recent motion through ricochets. Six
+evolutions add circular rims and stronger trail identities. Tree previews and
+dock icons also stay round; cached spherical sprites serve dense scenes.
 
-Scroll the tree or use the upgrade selector. Select a node to inspect its full
-effect and prerequisites, then use its purchase button. Dashed red lines mark
+Drag/scroll the tree or use its zoom/fit controls. Hovering a node shows its full effect and
+prerequisites; clicking it buys the upgrade immediately. Dashed red lines mark
 exclusive choices. Nodes cost ✦, not ◆. Purchases immediately update primary
 balls already in flight. Temporary pixel coatings use simulation time and are
 not persisted; the field, upgrades and economy are saved as before.
@@ -114,11 +126,19 @@ not persisted; the field, upgrades and economy are saved as before.
 Older saves keep their field, currency and selected ball. The previous trees
 are reset once, refunding their historical skill-point costs so players can
 choose a compatible new build. Internal ball IDs remain stable.
+The expanded trees preserve current builds. Older field health is scaled once
+while preserving cleared cells, partial damage, steel layout and shard positions.
 
 ## Sound
 
-Everything is synthesised. Click the **♪** button for master / effects / chime
-volume sliders; **M** mutes. Volumes and mute state persist.
+Everything is synthesised around one warm C-major harmony. Dense impacts
+coalesce into one note every 180 ms, with lower volume as density rises.
+Steel and bounce sounds fill gaps rather than competing with destruction.
+Soft attacks, lower registers, a low-pass filter and compression reduce sharp
+transients; polyphony is capped at 12 voices, with room reserved for UI/shards.
+There is one quiet delay repeat with no feedback accumulation.
+Click **♪** for master / effects / chime sliders; **M** mutes and clears
+scheduled notes. Volumes and mute state persist.
 
 ## Performance notes
 

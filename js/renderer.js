@@ -160,7 +160,7 @@ class Renderer {
       g.fill();
       if (form !== 'seed') {
         g.clearRect(0, 0, 32, 32);
-        drawBallForm(g, 16, 16, 6.25, form, color);
+        drawBallForm(g, 16, 16, 11, form, color);
       }
       this.ballSprites.set(key, c);
     }
@@ -271,9 +271,16 @@ class Renderer {
             let v = (i ^ (i >>> 5) ^ (i >>> 11)) & 7;
             if (nearFog(gx, gy)) v >>= 1;
             const p = ((maxHealth[i] * CFG.HEALTH_STRIDE + h) * 8 + v) * 3;
-            data[o] = lut.health[p];
-            data[o + 1] = lut.health[p + 1];
-            data[o + 2] = lut.health[p + 2];
+            if (h === maxHealth[i] && w.material[i]) {
+              const shade = 0.86 + v / 7 * 0.24;
+              data[o] = Math.round(FRESH_BROWN[0] * shade);
+              data[o + 1] = Math.round(FRESH_BROWN[1] * shade);
+              data[o + 2] = Math.round(FRESH_BROWN[2] * shade);
+            } else {
+              data[o] = lut.health[p];
+              data[o + 1] = lut.health[p + 1];
+              data[o + 2] = lut.health[p + 2];
+            }
             data[o + 3] = 255;
           }
         } else if (open[i] !== 0) {
@@ -400,7 +407,7 @@ class Renderer {
     const w = this.w;
     const h = this.h;
 
-    if (!simple && quality >= 1 && n <= 700) {
+    if (!simple && quality >= 1 && n <= 1000) {
       ctx.globalCompositeOperation = 'lighter';
       ctx.lineCap = 'round';
       for (let i = 0; i < n; i++) {
@@ -408,16 +415,43 @@ class Renderer {
         const x = cam.worldToScreenX(b.x);
         const y = cam.worldToScreenY(b.y);
         if (x < -90 || x > w + 90 || y < -90 || y > h + 90) continue;
-        const x2 = cam.worldToScreenX(b.x - b.vx * 0.032);
-        const y2 = cam.worldToScreenY(b.y - b.vy * 0.032);
         const r = Math.max(1.1, b.r * zoom);
-        ctx.globalAlpha = 0.32;
-        ctx.strokeStyle = b.color;
-        ctx.lineWidth = r * 1.15;
-        ctx.beginPath();
-        ctx.moveTo(x2, y2);
-        ctx.lineTo(x, y);
-        ctx.stroke();
+        const style = ballTrailStyle(b);
+        const rich = style !== 'soft';
+        const evolved = ['winter', 'comet', 'worldbreaker', 'titan', 'tempest', 'lightspeed'].includes(b.form);
+        const count = Math.min(b.trailCount || 1, rich ? (evolved ? 10 : 6) : 3);
+        let px = x, py = y;
+        for (let j = 1; j <= count; j++) {
+          const slot = (b.trailHead - j + 11) % 10;
+          const tx = b.trailX ? b.trailX[slot] : b.x - b.vx * j * 0.025;
+          const ty = b.trailY ? b.trailY[slot] : b.y - b.vy * j * 0.025;
+          const ex = cam.worldToScreenX(tx), ey = cam.worldToScreenY(ty);
+          const fade = 1 - j / (count + 1);
+          ctx.globalAlpha = fade * (rich ? (evolved ? 0.45 : 0.35) : 0.22);
+          ctx.strokeStyle = b.color;
+          ctx.fillStyle = b.color;
+          ctx.lineWidth = Math.max(0.7, r * fade * (style === 'ribbon' ? 0.6 : 1));
+          if (style === 'dust' || style === 'snow') {
+            ctx.beginPath();
+            ctx.arc(ex, ey, Math.max(0.5, r * fade * (style === 'dust' ? 0.45 : 0.22)), 0, TAU);
+            ctx.fill();
+          } else {
+            const length = Math.hypot(ex - px, ey - py) || 1;
+            const ox = -(ey - py) / length * r * 0.6;
+            const oy = (ex - px) / length * r * 0.6;
+            ctx.beginPath();
+            if (style === 'twin' || style === 'ribbon' || style === 'aurora') {
+              ctx.moveTo(px + ox, py + oy); ctx.lineTo(ex + ox, ey + oy);
+              ctx.moveTo(px - ox, py - oy); ctx.lineTo(ex - ox, ey - oy);
+            } else {
+              ctx.moveTo(px, py);
+              if (style === 'ion') ctx.lineTo((px + ex) / 2 + oy, (py + ey) / 2 - ox);
+              ctx.lineTo(ex, ey);
+            }
+            ctx.stroke();
+          }
+          px = ex; py = ey;
+        }
       }
       ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
@@ -433,37 +467,10 @@ class Renderer {
       if (simple) {
         // thousands of balls: a cached soft orb sprite beats per-ball paths
         const sp = this.ballSprite(b.color, b.form);
-        const sr = r * (b.form === 'seed' ? 1.2 : 2.56);
+        const sr = r * (b.form === 'seed' ? 1.2 : 1.46);
         ctx.drawImage(sp, x - sr, y - sr, sr * 2, sr * 2);
-      } else if (b.form !== 'seed') {
-        drawBallForm(ctx, x, y, r, b.form, b.color, Math.atan2(b.vy, b.vx));
-      } else if (quality >= 1 && n <= 600) {
-        // squashed along the direction of travel: a bouncy little blob
-        const a = Math.atan2(b.vy, b.vx);
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.rotate(a);
-        ctx.scale(1.14, 0.86);
-        ctx.beginPath();
-        ctx.arc(0, 0, r, 0, TAU);
-        ctx.fill();
-        if (quality >= 2 && r > 2.4) {
-          ctx.fillStyle = 'rgba(255,255,255,0.72)';
-          ctx.beginPath();
-          ctx.arc(-r * 0.28, -r * 0.3, r * 0.33, 0, TAU);
-          ctx.fill();
-        }
-        ctx.restore();
       } else {
-        ctx.beginPath();
-        ctx.arc(x, y, r, 0, TAU);
-        ctx.fill();
-        if (quality >= 2 && n < 1200 && r > 2.4) {
-          ctx.fillStyle = 'rgba(255,255,255,0.72)';
-          ctx.beginPath();
-          ctx.arc(x - r * 0.28, y - r * 0.3, r * 0.33, 0, TAU);
-          ctx.fill();
-        }
+        drawBallForm(ctx, x, y, r, b.form, b.color, Math.atan2(b.vy, b.vx));
       }
     }
   }
@@ -720,7 +727,11 @@ class Renderer {
           r += WALL_RGB[0]; g += WALL_RGB[1]; b += WALL_RGB[2];
         } else if (w.visible[i] !== 0 && w.health[i] !== 0) {
           const o = (w.maxHealth[i] * CFG.HEALTH_STRIDE + w.health[i]) * 3;
-          r += color2d[o]; g += color2d[o + 1]; b += color2d[o + 2];
+          if (w.health[i] === w.maxHealth[i] && w.material[i]) {
+            r += FRESH_BROWN[0]; g += FRESH_BROWN[1]; b += FRESH_BROWN[2];
+          } else {
+            r += color2d[o]; g += color2d[o + 1]; b += color2d[o + 2];
+          }
         } else if (w.open[i] !== 0) {
           r += 17; g += 23; b += 33;
         } else {

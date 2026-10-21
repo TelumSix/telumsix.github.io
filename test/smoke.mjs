@@ -49,6 +49,9 @@ const ballPrice = evalIn('ballPrice');
   assert.strictEqual(pixelColorRGB(CFG.MAX_HEALTH, CFG.MAX_HEALTH).join(','), FRESH_GREY.join(','), 'all full-health cells share the grey');
   assert.notStrictEqual(pixelColorRGB(CFG.MAX_HEALTH, 20).join(','), FRESH_GREY.join(','), 'damaged cells take on a heat colour');
   assert.notStrictEqual(pixelColorRGB(CFG.MAX_HEALTH, 20).join(','), pixelColorRGB(CFG.MAX_HEALTH, 5).join(','), 'colour tracks remaining health');
+  assert.strictEqual(pixelColorRGB(80, 19).join(','), pixelColorRGB(30, 19).join(','), 'damaged colour uses absolute HP');
+  assert.notStrictEqual(pixelColorRGB(80, 80, 1).join(','), FRESH_GREY.join(','), 'untouched soil is brown');
+  assert.strictEqual(pixelColorRGB(80, 79, 1).join(','), pixelColorRGB(80, 79, 0).join(','), 'first hit reveals HP regardless of material');
   assert.strictEqual(BALL_TYPES.length, 3, 'exactly three standard balls');
   assert.strictEqual(BALL_TYPES.map(b => b.id).join(','), 'arc,maul,drift');
   for (const ball of BALL_TYPES) {
@@ -129,16 +132,28 @@ assert.strictEqual(world.isCleared(CFG.GRID, 0), false, 'outside the field is no
 }
 
 // health bounds + shard cells
-assert.strictEqual(CFG.MAX_HEALTH, 40, 'pixels now reach 40 health');
+assert.strictEqual(CFG.MAX_HEALTH, 80, 'pixels now reach 80 health');
 for (let i = 0; i < world.w; i++) {
   const h = world.health[i];
   if (h !== 0) assert.ok(h >= 1 && h <= CFG.MAX_HEALTH, `bad health ${h}`);
   if (world.special[i]) {
-    assert.strictEqual(h, 1, 'shards are one-hit');
-    assert.strictEqual(world.maxHealth[i], 1);
+    assert.strictEqual(h, 2, 'shards are tougher too');
+    assert.strictEqual(world.maxHealth[i], 2);
   }
 }
 assert.strictEqual(new Set(world.shards.map(s => s.i)).size, world.shards.length, 'shards unique');
+{
+  let brown = 0, adjacent = 0;
+  for (let i = 0; i < world.w; i++) {
+    if (world.material[i]) {
+      brown++;
+      if (i % world.n > 0 && world.material[i - 1]) adjacent++;
+    }
+    if (world.maxHealth[i] && !world.special[i]) assert.ok(world.maxHealth[i] >= 4, 'ordinary pixels are tougher');
+  }
+  assert.ok(brown > 20000 && brown < world.w * 0.2, 'soil appears in scattered patches');
+  assert.ok(adjacent / brown > 0.7, 'brown cells cluster rather than forming random confetti');
+}
 
 // health rises towards the edges of the field
 {
@@ -292,7 +307,7 @@ function anyEmptyWithin3(x, y) {
   world.onShard = (x, y, v) => { got = v; };
   let destroyed = 0;
   world.onDestroy = () => { destroyed++; };
-  const r = world.damageAt(shard.x, shard.y, 1);
+  const r = world.damageAt(shard.x, shard.y, 2);
   assert.strictEqual(r, 2);
   assert.strictEqual(got, shard.value);
   assert.strictEqual(world.special[shard.i], 0);
@@ -487,6 +502,7 @@ function anyEmptyWithin3(x, y) {
   const copy = new Uint8Array(world.health);
   const w2 = evalIn('new World(12345)');
   assert.ok(w2.applyField(copy));
+  assert.deepStrictEqual(w2.material, world.material, 'soil patches are stable across saves');
   assert.strictEqual(w2.remaining, world.remaining);
   // visibility must be reconstructed
   let checked = 0;
@@ -498,6 +514,15 @@ function anyEmptyWithin3(x, y) {
       assert.strictEqual(w2.visible[i], world.visible[i], `restored visibility ${x},${y}`);
     }
   }
+  const legacy = Uint8Array.from(copy, h => Math.ceil(h / 2));
+  assert.ok(w2.applyField(legacy, 1));
+  assert.strictEqual(w2.remaining, world.remaining, 'legacy migration keeps cleared pixels cleared');
+  for (let i = 0; i < world.w; i += 997) {
+    assert.strictEqual(w2.health[i], Math.min(w2.maxHealth[i], legacy[i] * 2), 'legacy remaining HP scales once');
+  }
+  const current = new Uint8Array(w2.health);
+  w2.applyField(current, CFG.FIELD_VERSION);
+  assert.deepStrictEqual(w2.health, current, 'current saves are not scaled again');
 }
 
 /* ----------------------------------------------------------- compression */

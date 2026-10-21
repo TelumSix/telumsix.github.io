@@ -21,6 +21,7 @@ class World {
     this.special = new Uint8Array(this.w);
     this.visible = new Uint8Array(this.w);
     this.open = new Uint8Array(this.w);
+    this.material = new Uint8Array(this.w);
 
     this.chunkSolid = new Uint32Array(CFG.CHUNKS * CFG.CHUNKS);
     this.dirty = new Set();
@@ -69,6 +70,7 @@ class World {
     this.rng = rnd;
 
     this.buildHealthField(rnd);
+    this.buildMaterials();
     this.carveOpenSpace(rnd);
     this.buildWalls(rnd);
     this.fixConnectivity();
@@ -119,7 +121,8 @@ class World {
     const half = n * 0.5;
     const edgeDist = Math.SQRT2 * half;
     const floor = 4;
-    const peak = CFG.MAX_HEALTH - floor;
+    // Keep the historical noise sequence/layout; double its finished health.
+    const peak = 40 - floor;
 
     for (let gy = 0; gy < CN; gy++) {
       const y = gy * STEP;
@@ -156,7 +159,7 @@ class World {
         const top = a + (b - a) * fx;
         const bot = c + (d - c) * fx;
         let v = Math.round(top + (bot - top) * fy);
-        if (v < 1) v = 1; else if (v > CFG.MAX_HEALTH) v = CFG.MAX_HEALTH;
+        if (v < 1) v = 1; else if (v > 40) v = 40;
         h[row + x] = v;
       }
     }
@@ -182,8 +185,21 @@ class World {
           const add = Math.round(str * (1 - dd / rad));
           const i = y * n + x;
           const v = h[i] + add;
-          h[i] = v > CFG.MAX_HEALTH ? CFG.MAX_HEALTH : v;
+          h[i] = v > 40 ? 40 : v;
         }
+      }
+    }
+  }
+
+  buildMaterials() {
+    // Separate seed stream so adding soil never moves steel or shards.
+    const rnd = mulberry32(this.seed ^ 0x51a7b92d);
+    const noise = this.makeNoise(73, rnd);
+    for (let y = 0; y < this.n; y++) {
+      for (let x = 0; x < this.n; x++) {
+        this.material[y * this.n + x] = World.bilinear(noise, 73,
+          x / this.n * 72, y / this.n * 72) > 0.72 ? 1 : 0;
+        this.health[y * this.n + x] *= 2;
       }
     }
   }
@@ -776,7 +792,7 @@ class World {
       const i = y * n + x;
       if (this.wall[i] || this.health[i] === 0 || this.special[i]) return false;
       this.special[i] = 1;
-      this.health[i] = 1;
+      this.health[i] = 2;
       const value = 1 + (d > 300 ? 1 : 0) + (d > 430 ? 1 : 0);
       this.shards.push({ i, x, y, value });
       this.shardValues.set(i, value);
@@ -1140,9 +1156,12 @@ class World {
 
   /* ------------------------------------------------------------ restore */
 
-  applyField(bytes) {
+  applyField(bytes, fieldVersion = CFG.FIELD_VERSION) {
     if (!bytes || bytes.length !== this.w) return false;
     this.health.set(bytes);
+    if (fieldVersion < 2) {
+      for (let i = 0; i < this.w; i++) this.health[i] = Math.min(this.maxHealth[i], bytes[i] * 2);
+    }
     let rem = 0;
     for (let i = 0; i < this.w; i++) {
       if (this.health[i] !== 0 && this.wall[i] === 0) rem++;

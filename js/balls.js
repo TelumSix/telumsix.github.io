@@ -50,6 +50,13 @@ class BallSystem {
     b.form = o.form || 'seed';
     b.life = o.life == null ? Infinity : o.life;
     b.hits = 0;
+    b.trailX = b.trailX || new Float32Array(10);
+    b.trailY = b.trailY || new Float32Array(10);
+    b.trailX.fill(o.x);
+    b.trailY.fill(o.y);
+    b.trailHead = 0;
+    b.trailCount = 1;
+    b.trailTimer = 0;
     b.pierce = o.pierce || 0;
     b.startPierce = b.pierce;
     b.explode = o.explode || 0;
@@ -250,6 +257,14 @@ class BallSystem {
       else if (steps > 16) steps = 16;
       const sdt = dt / steps;
       for (let s = 0; s < steps; s++) this.step(b, sdt);
+      b.trailTimer += dt;
+      if (b.trailTimer >= 0.035) {
+        b.trailTimer %= 0.035;
+        b.trailHead = (b.trailHead + 1) % 10;
+        b.trailX[b.trailHead] = b.x;
+        b.trailY[b.trailHead] = b.y;
+        b.trailCount = Math.min(10, b.trailCount + 1);
+      }
       if (!isFinite(b.x) || !isFinite(b.y)) this.remove(i);
     }
     this.updating = false;

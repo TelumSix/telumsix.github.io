@@ -36,10 +36,11 @@ class Tech {
   }
 
   reqsMet(node) {
-    for (const r of node.req) {
-      if (this.level(r.id) < r.lvl) return false;
-    }
-    return true;
+    return this.routes(node).some(route => route.every(r => this.level(r.id) >= r.lvl));
+  }
+
+  routes(node) {
+    return [node.req, ...(node.routes || [])];
   }
 
   maxed(node) {
@@ -49,8 +50,14 @@ class Tech {
   blockedBy(node, seen = new Set()) {
     if (seen.has(node.id)) return [];
     seen.add(node.id);
-    const blocked = (node.excludes || []).filter(id => this.level(id) > 0);
-    for (const req of node.req) blocked.push(...this.blockedBy(TECH_BY_ID[req.id], seen));
+    const own = (node.excludes || []).filter(id => this.level(id) > 0);
+    if (own.length) return own;
+    const blocked = [];
+    for (const route of this.routes(node)) {
+      const routeBlocks = route.flatMap(req => this.blockedBy(TECH_BY_ID[req.id], new Set(seen)));
+      if (!routeBlocks.length) return [];
+      blocked.push(...routeBlocks);
+    }
     return [...new Set(blocked)];
   }
 
@@ -65,18 +72,20 @@ class Tech {
   getEffects() {
     const L = id => this.level(id);
     return {
-      damageBonus: L('damage') + 3 * L('focused'),
-      yieldMult: 1 + 0.15 * L('yield'),
+      damageBonus: L('damage') + 3 * L('focused') + 2 * L('hardimpact') + L('confluence'),
+      yieldMult: 1 + 0.15 * L('yield') + 0.2 * L('surveyor'),
       volley: 1 + L('volley'),
       costMult: Math.pow(0.92, L('discount')),
       bounty: L('bounty'),
       streakEvery: L('momentum') ? 44 - 8 * L('momentum') : 0,
       harvestEvery: L('sustain') ? 52 - 12 * L('sustain') : 0,
-      statusDuration: 2 * L('duration') + 2 * L('balance'),
-      reactionYield: 2 * L('salvage') + 5 * L('balance'),
+      statusDuration: 2 * L('duration') + 2 * L('balance') + 4 * L('relaynet') + 2 * L('confluence'),
+      reactionYield: 2 * L('salvage') + 5 * L('balance') + 4 * L('recycler') + 3 * L('reactor'),
       lattice: L('lattice') * 2,
       convergence: L('convergence') * 6,
-      echo: L('echo'),
+      echo: L('echo') + L('weave'),
+      chainDamage: L('weave'),
+      demandCooling: 1 + 0.25 * L('pacing'),
       execute: L('precision') * 0.15,
     };
   }
@@ -103,11 +112,13 @@ class Tech {
       if (node.tree !== def.id || !rank) continue;
       for (const [key, value] of Object.entries(node.effects)) {
         if (key === 'set') Object.assign(s, value);
+        else if (key === 'shatterLimit') s[key] = Math.max(s[key] || 0, value);
         else s[key] = (s[key] || 0) + value * rank;
       }
       if (node.form) s.form = node.form;
     }
     s.freezeEvery = s.freezeEvery ? Math.max(1, s.freezeEvery - s.freezeRate) : 0;
+    if (s.chainCount) s.chainDamage += e.chainDamage;
     s.freezeDuration += e.statusDuration;
     s.chargeDuration += e.statusDuration;
     s.faultDuration += e.statusDuration;
@@ -136,8 +147,8 @@ class Tech {
 
 /* ======================================================================== */
 
-const TREE_W = 1640;
-const TREE_H = 760;
+const TREE_W = 1900;
+const TREE_H = 960;
 const NODE_W = 184;
 const NODE_H = 62;
 
@@ -154,23 +165,33 @@ class TechUI {
     this.selectedNode = null;
     this.scaleX = 1;
     this.scaleY = 1;
+    this.viewScale = 0.85;
     this.bind();
   }
 
   bind() {
+    document.getElementById('treeZoomOut').addEventListener('click', () => this.setZoom(this.viewScale - 0.15));
+    document.getElementById('treeZoomIn').addEventListener('click', () => this.setZoom(this.viewScale + 0.15));
+    document.getElementById('treeFit').addEventListener('click', () => this.setZoom(Math.min(
+      (this.treeWrap.clientWidth - 4) / TREE_W, (this.treeWrap.clientHeight - 4) / TREE_H)));
     this.info.addEventListener('click', e => {
       if (e.target.closest('[data-buy-tech]') && this.inspected) {
         this.game.buyNode(this.inspected);
         this.draw();
         this.setInfo(this.inspected);
-        this.updateNodeSelect();
       }
     });
-    document.getElementById('techNodeSelect').addEventListener('change', e => {
-      const node = TECH_BY_ID[e.target.value];
-      if (node) this.clickNode(node);
-    });
     this.canvas.addEventListener('pointermove', (e) => {
+      if (this.treeDrag) {
+        const dx = e.clientX - this.treeDrag.x, dy = e.clientY - this.treeDrag.y;
+        if (Math.hypot(dx, dy) > 6) this.treeDrag.moved = true;
+        if (this.treeDrag.moved && e.pointerType !== 'touch') {
+          this.treeWrap.scrollLeft = this.treeDrag.left - dx;
+          this.treeWrap.scrollTop = this.treeDrag.top - dy;
+          this.canvas.style.cursor = 'grabbing';
+          return;
+        }
+      }
       const hit = this.hitTest(e);
       if (hit !== this.hover) {
         this.hover = hit;
@@ -186,9 +207,23 @@ class TechUI {
       this.setInfo(this.selectedNode);
     });
     this.canvas.addEventListener('pointerdown', (e) => {
-      e.preventDefault();
-      const hit = this.hitTest(e);
-      if (hit) this.clickNode(hit);
+      if (e.button !== 0) return;
+      this.treeDrag = { x: e.clientX, y: e.clientY, left: this.treeWrap.scrollLeft,
+        top: this.treeWrap.scrollTop, moved: false, node: this.hitTest(e) };
+      if (e.pointerType !== 'touch') {
+        e.preventDefault();
+        this.canvas.setPointerCapture(e.pointerId);
+      }
+    });
+    this.canvas.addEventListener('pointerup', () => {
+      const drag = this.treeDrag;
+      this.treeDrag = null;
+      this.canvas.style.cursor = 'pointer';
+      if (drag && !drag.moved && drag.node) this.clickNode(drag.node);
+    });
+    this.canvas.addEventListener('pointercancel', () => {
+      this.treeDrag = null;
+      this.canvas.style.cursor = 'pointer';
     });
 
     document.querySelectorAll('.tab').forEach(tab => {
@@ -226,16 +261,15 @@ class TechUI {
       t.classList.toggle('active', t.dataset.tree === this.tree);
     });
     if (this.treeWrap) this.treeWrap.classList.remove('hidden');
-    this.updateNodeSelect();
+    this.updateCount();
+    this.setZoom(this.viewScale);
   }
 
-  updateNodeSelect() {
-    const select = document.getElementById('techNodeSelect');
-    select.innerHTML = '<option value="">Inspect an upgrade…</option>' + this.nodes().map(n => {
-      const state = this.game.tech.blockedBy(n).length ? 'sealed' : this.game.tech.maxed(n) ? 'owned' : this.game.tech.reqsMet(n) ? 'available' : 'locked';
-      return '<option value="' + n.id + '">' + n.name + ' · ' + state + '</option>';
-    }).join('');
-    if (this.selectedNode) select.value = this.selectedNode.id;
+  setZoom(scale) {
+    this.viewScale = clamp(scale, 0.15, 1.3);
+    this.canvas.style.width = Math.round(TREE_W * this.viewScale) + 'px';
+    this.resize();
+    this.draw();
   }
 
   open() {
@@ -304,19 +338,25 @@ class TechUI {
       return;
     }
     this.selectedNode = node;
+    if (game.tech.canBuy(node, game.skill)) game.buyNode(node);
     this.draw();
     this.setInfo(node);
-    document.getElementById('techNodeSelect').value = node.id;
   }
 
   refresh() {
+    this.updateCount();
     this.draw();
+  }
+
+  updateCount() {
+    const nodes = this.nodes().filter(n => n.cost);
+    document.getElementById('treeCount').textContent = nodes.filter(n => this.game.tech.level(n.id)).length + ' / ' + nodes.length + ' upgrades';
   }
 
   setInfo(node) {
     this.inspected = node;
     if (!node) {
-      const hint = 'Select a node, then purchase below. Specializations seal their rival branch. Scroll to explore.';
+      const hint = 'Click a node to buy. Red links mark permanent choices; teal routes reopen selected rival talents later. Drag/scroll to explore, or fit the tree.';
       this.info.innerHTML = `<div class="ti-head"><span class="muted">${hint}</span></div><div class="ti-desc"></div>`;
       return;
     }
@@ -325,11 +365,11 @@ class TechUI {
     const lvl = tech.level(node.id);
     const maxed = tech.maxed(node);
     const cost = tech.nodeCost(node);
-    const reqs = node.req.map(r => {
+    const reqs = tech.routes(node).map(route => route.map(r => {
       const rn = TECH_BY_ID[r.id];
       const ok = tech.level(r.id) >= r.lvl;
       return `<span class="${ok ? 'req-ok' : 'req-no'}">${rn.name}${r.lvl > 1 ? ' Lv ' + r.lvl : ''}</span>`;
-    }).join(' · ');
+    }).join(' + ')).join(' <span class="muted">or</span> ');
 
     const blocked = tech.blockedBy(node);
     let status;
@@ -348,7 +388,9 @@ class TechUI {
     const levelTxt = node.maxLevel > 1 ? `<span class="ti-lv">Lv ${lvl}/${node.maxLevel}</span>` : '';
 
     const choice = (node.excludes || []).map(id => TECH_BY_ID[id].name).join(', ');
-    const details = (node.tag ? node.tag + ' · ' : '') + (choice ? 'Permanently blocks ' + choice + '. ' : '');
+    const returns = (node.reopens || []).map(id => TECH_BY_ID[id].name).join(', ');
+    const details = (node.tag ? node.tag + ' · ' : '') + (choice ? 'Blocks ' + choice + '. ' : '') +
+      (returns ? 'Reopens: ' + returns + '.' : '');
     const buy = node.kind === 'upgrade'
       ? '<button class="btn tiny" data-buy-tech ' + (tech.canBuy(node, game.skill) ? '' : 'disabled') + '>' +
         (choice ? 'Choose ' : 'Purchase ') + node.name + ' · ✦ ' + cost + '</button>' : '';
@@ -379,14 +421,6 @@ class TechUI {
     const tech = this.game.tech;
     const nodes = this.nodes();
     const set = new Set(nodes.map(n => n.id));
-    ctx.font = '600 12px ui-sans-serif, system-ui, sans-serif';
-    ctx.fillStyle = '#7d93b3';
-    ctx.textAlign = 'left';
-    ctx.fillText('FOUNDATIONS', 250, 40);
-    ctx.fillText('CHOOSE ONE PATH', 470, 40);
-    ctx.fillText('SPECIALIZE & COMBINE', 720, 40);
-    ctx.fillText('EVOLUTION', 1200, 40);
-    ctx.fillText('CROSS-BALL SYNERGY', 1420, 40);
 
     ctx.lineWidth = 2;
     for (const node of nodes) {
@@ -404,6 +438,25 @@ class TechUI {
         ctx.bezierCurveTo(mx, y1, mx, y2, x2, y2);
         ctx.strokeStyle = ok ? 'rgba(52, 211, 153, 0.45)' : 'rgba(96, 122, 158, 0.22)';
         ctx.stroke();
+      }
+    }
+    // Return routes bend outside the main lanes; emphasize the inspected path.
+    ctx.setLineDash([3, 7]);
+    for (const node of nodes) {
+      for (const route of node.routes || []) {
+        for (const r of route) {
+          const from = TECH_BY_ID[r.id];
+          if (from.tree !== this.tree) continue;
+          const active = tech.level(r.id) > 0;
+          const focus = this.hover === node || this.hover === from || this.selectedNode === node || this.selectedNode === from;
+          ctx.strokeStyle = active || focus ? 'rgba(99,214,208,0.65)' : 'rgba(99,214,208,0.18)';
+          ctx.beginPath();
+          const backwards = from.x > node.x;
+          const lane = node.y < 380 ? 65 : 755;
+          ctx.moveTo(from.x, from.y + (backwards ? -NODE_H / 2 : 0));
+          ctx.bezierCurveTo(from.x, lane, node.x, lane, node.x, node.y - NODE_H / 2);
+          ctx.stroke();
+        }
       }
     }
 
@@ -452,6 +505,11 @@ class TechUI {
       border = 'rgba(52, 211, 153, 0.65)';
       title = '#d9ffef';
       sub = '#7fe3bd';
+    } else if (node.tag === 'GATEWAY') {
+      fill = 'rgba(12, 38, 41, 0.95)';
+      border = 'rgba(99,214,208,0.65)';
+      title = '#b7f4ed';
+      sub = '#63d6d0';
     } else if (reqsOk) {
       border = affordable ? 'rgba(56, 189, 248, 0.75)' : 'rgba(74, 116, 155, 0.6)';
       title = '#e2ecfa';
@@ -506,6 +564,8 @@ class TechUI {
       ctx.arc(ix, iy, 3, 0, TAU);
       ctx.fillStyle = 'rgba(56, 189, 248, 0.9)';
       ctx.fill();
+    } else if (node.form) {
+      drawBallForm(ctx, ix, iy, 8, node.form, BALL_BY_ID[node.tree].color);
     } else {
       ctx.save();
       ctx.translate(ix, iy);
@@ -514,7 +574,6 @@ class TechUI {
       ctx.fillRect(-6, -6, 12, 12);
       ctx.restore();
     }
-    if (node.form) drawBallForm(ctx, ix, iy, 8, node.form, BALL_BY_ID[node.tree].color);
 
     // title
     ctx.font = '600 13px ui-sans-serif, system-ui, "Segoe UI", sans-serif';
