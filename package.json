@@ -1,0 +1,10 @@
+{
+  "name": "pixel-field",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Drag-to-shoot destruction game across a million-pixel field",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test/smoke.mjs"
+  }
+}

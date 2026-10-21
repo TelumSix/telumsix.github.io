@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="theme-color" content="#060810" />
+  <title>PIXEL FIELD — 1,000,000 pixels</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <canvas id="game" aria-label="Game field"></canvas>
+
+  <header id="hud">
+    <div class="hud-left">
+      <div class="chip currency-chip" id="currencyChip" title="Currency — earned by destroying pixels. Spent to launch balls.">
+        <span class="gem">◆</span><span id="currencyVal">0</span>
+      </div>
+      <div class="chip skill-chip" id="skillChip" title="Skill points — earned from glowing shards. Spent in the tech tree.">
+        <span class="star">✦</span><span id="skillVal">0</span>
+      </div>
+      <div class="chip pixels-chip" title="Breakable pixels left in the field">
+        <span id="pixelsLeft">1,000,000</span><span class="muted">left</span>
+      </div>
+      <div class="chip balls-chip" title="Balls currently ricocheting — they never stop">
+        <span class="ball-dot"></span><span id="ballCount">0</span><span class="muted" id="ballLabel">balls</span>
+      </div>
+      <div class="progress-wrap" title="Field cleared">
+        <div class="progress"><div class="progress-fill" id="progressFill"></div></div>
+        <span class="progress-label" id="progressPct">0.0%</span>
+      </div>
+    </div>
+    <div class="hud-right">
+      <button class="btn tech-btn" id="btnTech">Tech <kbd>T</kbd><span class="tech-dot" id="techDot"></span></button>
+      <button class="btn ghost" id="btnSound" title="Toggle sound (M)">♪</button>
+      <button class="btn ghost" id="btnHelp" title="Help (H)">?</button>
+    </div>
+  </header>
+
+  <div id="audioPanel" class="audio-panel hidden" role="dialog" aria-label="Sound settings">
+    <div class="audio-head">
+      <span>SOUND</span>
+      <button class="btn tiny" id="btnMutePanel">Mute</button>
+    </div>
+    <label class="audio-row">
+      <span>Master</span>
+      <input type="range" id="volMaster" min="0" max="100" step="1" value="70" />
+      <span class="audio-val" id="valMaster">70%</span>
+    </label>
+    <label class="audio-row">
+      <span>Effects</span>
+      <input type="range" id="volFx" min="0" max="100" step="1" value="80" />
+      <span class="audio-val" id="valFx">80%</span>
+    </label>
+    <label class="audio-row">
+      <span>Chimes</span>
+      <input type="range" id="volChime" min="0" max="100" step="1" value="90" />
+      <span class="audio-val" id="valChime">90%</span>
+    </label>
+  </div>
+
+  <div id="minimapWrap">
+    <div class="mm-head"><span>FIELD MAP</span><span id="mmZoom">100%</span></div>
+    <canvas id="minimap" width="200" height="200"></canvas>
+    <div class="mm-zoom">
+      <button class="btn tiny" id="btnZoomOut" title="Zoom out">−</button>
+      <button class="btn tiny" id="btnZoomIn" title="Zoom in">+</button>
+    </div>
+  </div>
+
+  <footer id="dock">
+    <div class="ball-list" id="ballList"></div>
+    <div class="dock-tip">Drag back to sling · release to fire · wheel to zoom</div>
+  </footer>
+
+  <div id="hint" class="hint">Drag back to sling · release to fire</div>
+  <div id="toast" class="toast"></div>
+
+  <div id="techOverlay" class="overlay hidden">
+    <div class="panel tech-panel">
+      <div class="panel-head">
+        <div>
+          <h2>Tech Tree</h2>
+          <p class="muted">Spend <span class="star">✦</span> skill points recovered from glowing shards.</p>
+        </div>
+        <div class="panel-head-right">
+          <div class="chip skill-chip"><span class="star">✦</span><span id="techSkill">0</span></div>
+          <div class="chip currency-chip"><span class="gem">◆</span><span id="techCurrency">0</span></div>
+          <button class="btn ghost" id="btnCloseTech" title="Close (Esc)">✕</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <button class="tab active" data-tree="arsenal">Arsenal</button>
+        <button class="tab" data-tree="upgrades">Upgrades</button>
+        <button class="tab" data-tree="balls">Ball Upgrades</button>
+      </div>
+      <div class="tree-wrap" id="treeWrap"><canvas id="treeCanvas"></canvas></div>
+      <div id="ballUpgrades" class="ball-upgrades hidden"></div>
+      <div class="tree-info" id="treeInfo"><span class="muted">Hover a node to inspect it · click to purchase · click an owned ball to equip it.</span></div>
+    </div>
+  </div>
+
+  <div id="helpOverlay" class="overlay hidden">
+    <div class="panel help-panel">
+      <div class="panel-head">
+        <h2>How to play</h2>
+        <button class="btn ghost" id="btnCloseHelp" title="Close (Esc)">✕</button>
+      </div>
+      <div class="help-grid">
+        <section>
+          <h3>Shooting</h3>
+          <p><b>Sling it.</b> Press anywhere, then drag <b>away</b> from where you want the ball to fly — like pulling back a slingshot. The ball spawns where you pressed and launches in the <b>opposite</b> direction on release. Longer pull = faster ball.</p>
+          <p><b>Balls never stop.</b> Every round ricochets off pixels and steel forever, damaging whatever it touches. Long streaks add damage and size. The field fills up: late in a run there can be thousands of balls in flight.</p>
+          <p><b>Every unlocked ball has its own upgrade track</b> in the <b>Ball Upgrades</b> tab — damage, speed, size and a signature that plays into its bounce: quicker streaks, faster wind-up, harder crush, wider shockwave, more pierce or extra sparks. Shared upgrades live in the <b>Upgrades</b> tab.</p>
+          <p><b>Right-drag</b> or <b>WASD</b> pans the camera. <b>Wheel</b> zooms at the cursor. Click the field map to jump.</p>
+          <p><b>1–9</b> selects a ball. <b>T</b> opens the tech tree. <b>M</b> mutes. Click <b>♪</b> for master / effects / chime volume.</p>
+        </section>
+        <section>
+          <h3>The field</h3>
+          <p>One million pixel cells, each <b>five ball-diameters</b> wide. Fresh pixels are grey; damage heats them yellow → orange → red. Steel is white.</p>
+          <p><b>Every cell is a pixel</b> except the small starting arena. Most are breakable; the steel ones are not.</p>
+          <p><b>The dark hides the field.</b> A pixel only shows once a neighbouring pixel is broken — each impact reveals 3 pixels deep. Fog is pitch black; ground you have already cleared is a shade lighter. Your shots still collide with the dark, so every blind shot lights up its surroundings.</p>
+          <p><b>Steel pixels</b> are unbreakable and form one connected web: dashed arteries across the whole field, decorated with rings, wheels, ladders, combs, zigzags, polygons and gates. Every run stays reachable. They block and bounce shots, so dig around them. A <b>Bouncer</b> grows stronger and larger every time it hits steel.</p>
+        </section>
+        <section>
+          <h3>Economy</h3>
+          <p>Destroying pixels earns <span class="gem">◆</span>, which pays for launching balls. Every ball has its own launch price and reload time, and <b>each launch makes that ball 1.5× pricier</b> — leaning on one ball gets expensive, so mix them up.</p>
+          <p><b>Glowing shards</b> are always visible, even in the dark. Break one to earn <span class="star">✦</span> skill points and unlock tech. Far shards are worth more.</p>
+        </section>
+        <section>
+          <h3>Damage colours</h3>
+          <div class="legend" id="legend"></div>
+          <p class="muted small">Pixels start grey; the brighter and warmer they glow, the closer they are to breaking. One hit removes one health, and every ball has its own reload time.</p>
+        </section>
+      </div>
+      <div class="help-actions">
+        <button class="btn" id="btnNewField">Generate a new field</button>
+        <button class="btn danger" id="btnWipe">Wipe all progress</button>
+        <span class="muted small" id="helpStats"></span>
+      </div>
+    </div>
+  </div>
+
+  <div id="winOverlay" class="overlay hidden">
+    <div class="panel win-panel">
+      <div class="win-glow"></div>
+      <h2>FIELD CLEARED</h2>
+      <p>Every breakable pixel in the field has been reduced to dust.</p>
+      <div class="win-stats" id="winStats"></div>
+      <button class="btn primary" id="btnNewFieldWin">Generate a new field</button>
+    </div>
+  </div>
+
+  <div id="loading" class="loading">
+    <div class="loader">
+      <div class="brand">PIXEL<span>FIELD</span></div>
+      <div class="bar"><div id="loadFill"></div></div>
+      <div class="load-text" id="loadText">Generating 1,000,000 pixels…</div>
+    </div>
+  </div>
+
+  <div id="fatal" class="fatal hidden"></div>
+
+  <script src="js/util.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/sfx.js"></script>
+  <script src="js/world.js"></script>
+  <script src="js/particles.js"></script>
+  <script src="js/balls.js"></script>
+  <script src="js/tech.js"></script>
+  <script src="js/renderer.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
