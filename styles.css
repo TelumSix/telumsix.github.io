@@ -705,6 +705,7 @@ kbd {
   font-size: 11.5px;
   white-space: pre-wrap;
 }
+.fatal.hidden { display: none; }
 
 /* ---------------------------------------------------------- Responsive */
 

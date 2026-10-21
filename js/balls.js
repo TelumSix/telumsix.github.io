@@ -231,7 +231,7 @@ class BallSystem {
       const maxStep = Math.max(2.5, b.r * 0.9);
       let steps = Math.ceil((b.baseSpeed * dt) / maxStep);
       if (steps < 1) steps = 1;
-      else if (steps > 8) steps = 8;
+      else if (steps > 16) steps = 16;
       const sdt = dt / steps;
       for (let s = 0; s < steps; s++) this.step(b, sdt);
       if (!isFinite(b.x) || !isFinite(b.y)) this.remove(i);
@@ -267,6 +267,12 @@ class BallSystem {
     const health = this.world.health;
     const wall = this.world.wall;
     const piercing = b.pierce > 0;
+
+    // Pick the most relevant overlap, preferring cells the ball is actually
+    // moving into. Resolving the first cell in scan order used to produce the
+    // occasional phantom double-bounce at corners.
+    let best = null;
+    let bestScore = -Infinity;
 
     for (let cy = minY; cy <= maxY; cy++) {
       if (cy < 0 || cy >= n) continue;
@@ -309,56 +315,141 @@ class BallSystem {
           else { nx = 0; ny = 1; pen = r + bb; }
         }
 
-        if (isWall !== 0) {
-          this.game.onWallHit(cx * P + P * 0.5, cy * P + P * 0.5);
-          if (b.ramp > 0 && b.damage < b.damageCap) {
-            b.damage = Math.min(b.damageCap, b.damage + b.ramp);
-            b.r = Math.min(b.radiusCap, b.r + b.baseRadius * b.rampSize);
-          }
-          if (b.chargeOnSteel > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
-            b.baseSpeed = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.chargeOnSteel));
-          }
-          if (b.explode > 0 && !b.hasExploded) {
-            b.hasExploded = true;
-            this.detonate(b);
-          }
-          if (b.impactR > 0) this.impactBlast(b);
-          this.bounce(b, nx, ny, pen, cx, cy);
-          return;
+        const vn = b.vx * nx + b.vy * ny;
+        const score = (vn < 0 ? 1e9 : 0) + pen;
+        if (score > bestScore) {
+          bestScore = score;
+          best = { idx, cx, cy, isWall, nx, ny, pen, vn };
         }
-
-        this.world.damageAt(cx, cy, b.damage);
-        if (b.impactR > 0) this.impactBlast(b);
-
-        if (b.pierce > 0) {
-          b.pierce--;
-          b.hitCells.add(idx);
-          if (b.pierceCharge > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
-            const next = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.pierceCharge));
-            const k = next / b.baseSpeed;
-            b.baseSpeed = next;
-            b.vx *= k;
-            b.vy *= k;
-          }
-          return;
-        }
-
-        if (b.explode > 0 && !b.hasExploded) {
-          b.hasExploded = true;
-          this.detonate(b);
-        }
-        if (b.split > 0 && !b.hasSplit) {
-          b.hasSplit = true;
-          this.splitBall(b);
-        }
-
-        this.bounce(b, nx, ny, pen, cx, cy);
-        return;
       }
+    }
+
+    if (!best) return;
+
+    const { cx, cy, isWall, nx, ny, pen } = best;
+
+    // Already moving away from this surface: just separate, never reflect or
+    // damage twice. This is what caused the rare "sticky" bounce.
+    if (best.vn >= 0) {
+      b.x += nx * (pen + 0.2);
+      b.y += ny * (pen + 0.2);
+      this.separate(b);
+      return;
+    }
+
+    if (isWall !== 0) {
+      this.game.onWallHit(cx * P + P * 0.5, cy * P + P * 0.5);
+      if (b.ramp > 0 && b.damage < b.damageCap) {
+        b.damage = Math.min(b.damageCap, b.damage + b.ramp);
+        b.r = Math.min(b.radiusCap, b.r + b.baseRadius * b.rampSize);
+      }
+      if (b.chargeOnSteel > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
+        b.baseSpeed = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.chargeOnSteel));
+      }
+      if (b.explode > 0 && !b.hasExploded) {
+        b.hasExploded = true;
+        this.detonate(b);
+      }
+      if (b.impactR > 0) this.impactBlast(b);
+      this.bounce(b, nx, ny, pen, cx, cy);
+      this.separate(b);
+      return;
+    }
+
+    this.world.damageAt(cx, cy, b.damage);
+    if (b.impactR > 0) this.impactBlast(b);
+
+    if (b.pierce > 0) {
+      b.pierce--;
+      b.hitCells.add(best.idx);
+      if (b.pierceCharge > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
+        const next = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.pierceCharge));
+        const k = next / b.baseSpeed;
+        b.baseSpeed = next;
+        b.vx *= k;
+        b.vy *= k;
+      }
+      return;
+    }
+
+    if (b.explode > 0 && !b.hasExploded) {
+      b.hasExploded = true;
+      this.detonate(b);
+    }
+    if (b.split > 0 && !b.hasSplit) {
+      b.hasSplit = true;
+      this.splitBall(b);
+    }
+
+    this.bounce(b, nx, ny, pen, cx, cy);
+    this.separate(b);
+  }
+
+  /** Push a ball clear of any remaining solids without triggering effects. */
+  separate(b) {
+    const P = this.P;
+    const n = this.world.n;
+    const r = b.r;
+    const health = this.world.health;
+    const wall = this.world.wall;
+
+    for (let pass = 0; pass < 3; pass++) {
+      const minX = Math.floor((b.x - r) / P);
+      const maxX = Math.floor((b.x + r) / P);
+      const minY = Math.floor((b.y - r) / P);
+      const maxY = Math.floor((b.y + r) / P);
+      let moved = false;
+
+      for (let cy = minY; cy <= maxY && !moved; cy++) {
+        if (cy < 0 || cy >= n) continue;
+        const row = cy * n;
+        const py = cy * P;
+        for (let cx = minX; cx <= maxX; cx++) {
+          if (cx < 0 || cx >= n) continue;
+          const idx = row + cx;
+          if (idx === b.ignoreCell) continue;
+          if (health[idx] === 0 && wall[idx] === 0) continue;
+          if (b.pierce > 0 && b.hitCells.has(idx)) continue;
+
+          const px = cx * P;
+          const qx = b.x < px ? px : (b.x > px + P ? px + P : b.x);
+          const qy = b.y < py ? py : (b.y > py + P ? py + P : b.y);
+          const dx = b.x - qx;
+          const dy = b.y - qy;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > r * r) continue;
+
+          let nx;
+          let ny;
+          let pen;
+          if (d2 > 1e-6) {
+            const d = Math.sqrt(d2);
+            nx = dx / d;
+            ny = dy / d;
+            pen = r - d;
+          } else {
+            const l = b.x - px;
+            const rr = px + P - b.x;
+            const t = b.y - py;
+            const bb = py + P - b.y;
+            const m = Math.min(l, rr, t, bb);
+            if (m === l) { nx = -1; ny = 0; pen = r + l; }
+            else if (m === rr) { nx = 1; ny = 0; pen = r + rr; }
+            else if (m === t) { nx = 0; ny = -1; pen = r + t; }
+            else { nx = 0; ny = 1; pen = r + bb; }
+          }
+
+          b.x += nx * (pen + 0.05);
+          b.y += ny * (pen + 0.05);
+          moved = true;
+          break;
+        }
+      }
+      if (!moved) break;
     }
   }
 
-  /** Perfectly elastic bounce with a tiny jitter so balls never settle. */
+  /** Perfectly elastic bounce: the normal component flips, speed is kept. */
   bounce(b, nx, ny, pen, cx, cy) {
     b.x += nx * (pen + 0.6);
     b.y += ny * (pen + 0.6);
@@ -368,12 +459,15 @@ class BallSystem {
       b.baseSpeed = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.charge));
     }
 
-    const dot = b.vx * nx + b.vy * ny;
-    const vx = b.vx - 2 * dot * nx;
-    const vy = b.vy - 2 * dot * ny;
-    const angle = Math.atan2(vy, vx) + (Math.random() - 0.5) * 0.05;
-    b.vx = Math.cos(angle) * b.baseSpeed;
-    b.vy = Math.sin(angle) * b.baseSpeed;
+    const vn = b.vx * nx + b.vy * ny;
+    b.vx -= 2 * vn * nx;
+    b.vy -= 2 * vn * ny;
+    const speed = Math.hypot(b.vx, b.vy);
+    if (speed > 0) {
+      const k = b.baseSpeed / speed;
+      b.vx *= k;
+      b.vy *= k;
+    }
 
     b.bounces++;
 

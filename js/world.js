@@ -118,7 +118,8 @@ class World {
     const coarse = new Float32Array(CN * CN);
     const half = n * 0.5;
     const edgeDist = Math.SQRT2 * half;
-    const peak = CFG.MAX_HEALTH - 1;
+    const floor = 4;
+    const peak = CFG.MAX_HEALTH - floor;
 
     for (let gy = 0; gy < CN; gy++) {
       const y = gy * STEP;
@@ -133,7 +134,7 @@ class World {
         const na = World.bilinear(noiseA, 64, (x / n) * 63, ny);
         const nb = World.bilinear(noiseB, 17, (x / n) * 16, (y / n) * 16);
         const nv = na * 0.62 + nb * 0.38;
-        coarse[gy * CN + gx] = 1 + Math.pow(t, 1.12) * peak + (nv - 0.5) * 3.2;
+        coarse[gy * CN + gx] = floor + Math.pow(t, 1.12) * peak + (nv - 0.5) * 3.2;
       }
     }
 

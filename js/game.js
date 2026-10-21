@@ -499,8 +499,19 @@ class Game {
     const angle = Math.atan2(dy, dx);
     const volley = this.effects.volley;
     const spread = 0.055;
-    const ox = clamp(aim.wx, 1, CFG.WORLD - 1);
-    const oy = clamp(aim.wy, 1, CFG.WORLD - 1);
+    let ox = clamp(aim.wx, 1, CFG.WORLD - 1);
+    let oy = clamp(aim.wy, 1, CFG.WORLD - 1);
+
+    // Keep the whole ball inside the cleared launch cell so it can never spawn
+    // overlapping an adjacent solid pixel.
+    const [ocx, ocy] = this.world.cellAt(ox, oy);
+    const r = def.radius;
+    const minX = ocx * CFG.PIXEL + r;
+    const maxX = (ocx + 1) * CFG.PIXEL - r;
+    const minY = ocy * CFG.PIXEL + r;
+    const maxY = (ocy + 1) * CFG.PIXEL - r;
+    if (maxX > minX) ox = clamp(ox, minX, maxX);
+    if (maxY > minY) oy = clamp(oy, minY, maxY);
 
     for (let i = 0; i < volley; i++) {
       const a = angle + (i - (volley - 1) * 0.5) * spread;
@@ -845,9 +856,9 @@ class Game {
     if (!el) return;
     el.innerHTML = '';
     const rows = [
-      ['fresh', pixelCss(1, 1)],
-      ['hurt', pixelCss(6, 3)],
-      ['critical', pixelCss(CFG.MAX_HEALTH, 1)],
+      ['fresh', pixelCss(CFG.MAX_HEALTH, CFG.MAX_HEALTH)],
+      ['hurt', pixelCss(CFG.MAX_HEALTH, Math.round(CFG.MAX_HEALTH * 0.6))],
+      ['critical', pixelCss(CFG.MAX_HEALTH, 4)],
       ['steel', `rgb(${WALL_RGB[0]},${WALL_RGB[1]},${WALL_RGB[2]})`],
       ['shard \u2726', SHARD_CSS],
     ];

@@ -16,7 +16,7 @@ const CFG = {
   MAX_ZOOM: 2.6,
   FREE_R: 7,
   REVEAL: 3,
-  MAX_HEALTH: 20,
+  MAX_HEALTH: 40,
   SAVE_KEY: 'pixelfield.save.v4',
   MUTE_KEY: 'pixelfield.muted',
   VOLUME_KEY: 'pixelfield.volumes',
@@ -42,19 +42,10 @@ const PRICING = {
 };
 
 /**
- * Pixels start grey. The grey shade encodes toughness (max health); damage
- * heats the pixel yellow -> orange -> red. Steel is white.
- * Generated so the palette always covers the full 1..MAX_HEALTH range.
+ * Every undamaged pixel is the same neutral grey. Damage tints it through
+ * yellow -> orange -> red according to the health it has left.
  */
-const FRESH_GREYS = [null];
-for (let i = 1; i <= CFG.MAX_HEALTH; i++) {
-  const t = (i - 1) / Math.max(1, CFG.MAX_HEALTH - 1);
-  FRESH_GREYS.push([
-    Math.round(92 + t * 112),
-    Math.round(104 + t * 110),
-    Math.round(124 + t * 102),
-  ]);
-}
+const FRESH_GREY = [138, 150, 168];
 
 const DAMAGE_YELLOW = [255, 214, 102];
 const DAMAGE_ORANGE = [249, 115, 22];
@@ -71,13 +62,16 @@ function mixRgb(a, b, t) {
 function pixelColorRGB(maxH, h) {
   const m = clamp(maxH | 0, 1, CFG.MAX_HEALTH);
   const cur = clamp(h | 0, 1, m);
-  const base = FRESH_GREYS[m];
-  if (m <= 1 || cur >= m) return base;
-  const dmg = 1 - (cur - 1) / (m - 1);
-  const heat = dmg < 0.5
-    ? mixRgb(DAMAGE_YELLOW, DAMAGE_ORANGE, dmg * 2)
-    : mixRgb(DAMAGE_ORANGE, DAMAGE_RED, (dmg - 0.5) * 2);
-  return mixRgb(base, heat, Math.min(1, dmg * 1.08));
+  if (m <= 1 || cur >= m) return FRESH_GREY;
+  // How hurt the pixel is, so its colour tracks the health it has left.
+  const hurt = 1 - (cur - 1) / (m - 1);
+  const heatT = Math.pow(hurt, 0.65);
+  const heat = heatT < 0.5
+    ? mixRgb(DAMAGE_YELLOW, DAMAGE_ORANGE, heatT * 2)
+    : mixRgb(DAMAGE_ORANGE, DAMAGE_RED, (heatT - 0.5) * 2);
+  // Even the first hit shows; the tint deepens as health drains away.
+  const tint = Math.min(1, 0.22 + heatT * 0.95);
+  return mixRgb(FRESH_GREY, heat, tint);
 }
 
 function pixelCss(maxH, h) {

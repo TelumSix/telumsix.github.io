@@ -34,9 +34,10 @@ npm test         # world generation / fog / physics / save round-trip checks
 
 * A pixel is **five ball diameters** wide. The field is a 1000 × 1000 grid.
 * **Every cell is a pixel** except a small starting arena (~290 cells). Pixels are
-  either breakable (**grey**, health 1–20, heating yellow → orange → red as they
-  take damage) or **steel** (white). Health climbs with distance from the
-  starting arena: the centre is fragile, the outer edges are the toughest.
+  either breakable or **steel** (white). Every undamaged breakable pixel is the
+  same neutral grey; losing health heats it yellow → orange → red. Health is
+  1–40 and climbs with distance from the starting arena: the centre is fragile,
+  the outer edges are the toughest.
 * **Balls never stop.** Every round ricochets off pixels and steel forever,
   damaging whatever it touches. Every bounce feeds the ball's own gimmick and
   every few bounces the streak adds damage and size. Late in a run there can be

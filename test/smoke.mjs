@@ -43,6 +43,12 @@ const ballPrice = evalIn('ballPrice');
 
 {
   const TECH_NODES = evalIn('TECH_NODES');
+  const FRESH_GREY = evalIn('FRESH_GREY');
+  const pixelColorRGB = evalIn('pixelColorRGB');
+  assert.strictEqual(pixelColorRGB(1, 1).join(','), FRESH_GREY.join(','), 'full health is grey');
+  assert.strictEqual(pixelColorRGB(CFG.MAX_HEALTH, CFG.MAX_HEALTH).join(','), FRESH_GREY.join(','), 'all full-health cells share the grey');
+  assert.notStrictEqual(pixelColorRGB(CFG.MAX_HEALTH, 20).join(','), FRESH_GREY.join(','), 'damaged cells take on a heat colour');
+  assert.notStrictEqual(pixelColorRGB(CFG.MAX_HEALTH, 20).join(','), pixelColorRGB(CFG.MAX_HEALTH, 5).join(','), 'colour tracks remaining health');
   assert.strictEqual(BALL_TYPES.length, 3, 'exactly three standard balls');
   assert.strictEqual(BALL_TYPES.map(b => b.id).join(','), 'arc,maul,drift');
   for (const ball of BALL_TYPES) {
@@ -123,7 +129,7 @@ assert.strictEqual(world.isCleared(CFG.GRID, 0), false, 'outside the field is no
 }
 
 // health bounds + shard cells
-assert.strictEqual(CFG.MAX_HEALTH, 20, 'pixels now reach 20 health');
+assert.strictEqual(CFG.MAX_HEALTH, 40, 'pixels now reach 40 health');
 for (let i = 0; i < world.w; i++) {
   const h = world.health[i];
   if (h !== 0) assert.ok(h >= 1 && h <= CFG.MAX_HEALTH, `bad health ${h}`);
@@ -331,7 +337,7 @@ function anyEmptyWithin3(x, y) {
 // explosions
 {
   const before = world.remaining;
-  const hits = world.explode(CFG.HALF + 900, CFG.HALF, CFG.PIXEL * 4, 2);
+  const hits = world.explode(CFG.HALF + 900, CFG.HALF, CFG.PIXEL * 4, 99);
   assert.ok(hits > 0, 'explosion hits pixels');
   assert.ok(world.remaining < before, 'explosion destroys pixels');
 }
@@ -377,6 +383,7 @@ function anyEmptyWithin3(x, y) {
   balls.fire(def, CFG.HALF, CFG.HALF, 0);
   assert.strictEqual(balls.count, 1);
   assert.strictEqual(balls.list[0].baseSpeed, def.speed, 'every launch uses the ball\'s fixed speed');
+  balls.list[0].damage = 99;
   for (let i = 0; i < 600; i++) balls.update(1 / 60);
   assert.strictEqual(balls.count, 1, 'ball ricochets forever');
   assert.ok(world.remaining < before, 'ball destroyed at least one pixel');
