@@ -140,8 +140,9 @@ class Renderer {
     return c;
   }
 
-  ballSprite(color) {
-    let c = this.ballSprites.get(color);
+  ballSprite(color, form = 'seed') {
+    const key = color + ':' + form;
+    let c = this.ballSprites.get(key);
     if (!c) {
       c = document.createElement('canvas');
       c.width = 32;
@@ -157,7 +158,11 @@ class Renderer {
       g.beginPath();
       g.arc(16, 16, 15.5, 0, TAU);
       g.fill();
-      this.ballSprites.set(color, c);
+      if (form !== 'seed') {
+        g.clearRect(0, 0, 32, 32);
+        drawBallForm(g, 16, 16, 6.25, form, color);
+      }
+      this.ballSprites.set(key, c);
     }
     return c;
   }
@@ -427,9 +432,11 @@ class Renderer {
       ctx.fillStyle = b.color;
       if (simple) {
         // thousands of balls: a cached soft orb sprite beats per-ball paths
-        const sp = this.ballSprite(b.color);
-        const sr = r * 1.2;
+        const sp = this.ballSprite(b.color, b.form);
+        const sr = r * (b.form === 'seed' ? 1.2 : 2.56);
         ctx.drawImage(sp, x - sr, y - sr, sr * 2, sr * 2);
+      } else if (b.form !== 'seed') {
+        drawBallForm(ctx, x, y, r, b.form, b.color, Math.atan2(b.vy, b.vx));
       } else if (quality >= 1 && n <= 600) {
         // squashed along the direction of travel: a bouncy little blob
         const a = Math.atan2(b.vy, b.vx);
@@ -462,6 +469,39 @@ class Renderer {
   }
 
   /* ------------------------------------------------------------------ fx */
+
+  drawCoatings(reactions, cam) {
+    if (!reactions) return;
+    const ctx = this.ctx, w = reactions.world, time = reactions.time;
+    const size = CFG.PIXEL * cam.zoom;
+    for (const [i, s] of reactions.cells) {
+      if (!w.visible[i] || !w.health[i]) continue;
+      const x = cam.worldToScreenX((i % w.n) * CFG.PIXEL);
+      const y = cam.worldToScreenY(Math.floor(i / w.n) * CFG.PIXEL);
+      if (x < -size || x > this.w || y < -size || y > this.h) continue;
+      if (s.frozen > time) {
+        ctx.fillStyle = 'rgba(125,211,252,0.55)';
+        ctx.fillRect(x + 1, y + 1, size - 2, size - 2);
+        ctx.strokeStyle = '#c5f5ff';
+        ctx.lineWidth = Math.max(1, cam.zoom);
+        ctx.strokeRect(x + 2, y + 2, Math.max(1, size - 4), Math.max(1, size - 4));
+      }
+      if (s.fault > time) {
+        ctx.strokeStyle = '#fbbf24';
+        ctx.lineWidth = Math.max(1, size * 0.06);
+        ctx.beginPath();
+        ctx.moveTo(x + size * 0.3, y + size * 0.1);
+        ctx.lineTo(x + size * 0.6, y + size * 0.45);
+        ctx.lineTo(x + size * 0.4, y + size * 0.65);
+        ctx.lineTo(x + size * 0.7, y + size * 0.9);
+        ctx.stroke();
+      }
+      if (s.charged > time) {
+        ctx.fillStyle = '#e9b6ff';
+        ctx.fillRect(x + size * 0.6, y + size * 0.15, Math.max(2, size * 0.18), Math.max(2, size * 0.18));
+      }
+    }
+  }
 
   drawParticles(fx, cam) {
     const ctx = this.ctx;
@@ -774,6 +814,7 @@ class Renderer {
 
     this.drawGrid(cam);
     this.drawField(cam);
+    this.drawCoatings(game.balls.reactions, cam);
     this.drawWorldEdge(cam);
     this.drawShardGlow(cam);
     this.drawParticles(game.fx, cam);

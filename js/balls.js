@@ -2,8 +2,8 @@
 
 /**
  * Ball physics. Every ball ricochets forever and keeps damaging pixels on
- * contact; special abilities fire once. Balls are projectiles (no ball-ball
- * collision) and are sub-stepped so fast rounds cannot tunnel.
+ * contact; purchased skills add timed coatings and bounded reactions. Balls
+ * are projectiles (no ball-ball collision) and use collision substeps.
  */
 class BallSystem {
   constructor(world, game) {
@@ -14,6 +14,8 @@ class BallSystem {
     this.P = CFG.PIXEL;
     this.updating = false;
     this.recycleCursor = 0;
+    this.reactions = new PixelReactions(world, game);
+    world.reactions = this.reactions;
   }
 
   get count() {
@@ -44,7 +46,12 @@ class BallSystem {
     b.ramp = o.ramp || 0;
     b.rampSize = o.rampSize || 0;
     b.color = o.color;
+    b.rules = o.rules || {};
+    b.form = o.form || 'seed';
+    b.life = o.life == null ? Infinity : o.life;
+    b.hits = 0;
     b.pierce = o.pierce || 0;
+    b.startPierce = b.pierce;
     b.explode = o.explode || 0;
     b.explodeDmg = o.explodeDmg || 0;
     b.split = o.split || 0;
@@ -66,7 +73,7 @@ class BallSystem {
     b.spawnCount = o.spawnCount || 0;
     b.pierceEvery = o.pierceEvery || 0;
     b.pierceCap = o.pierceCap || 0;
-    b.streakDamage = o.streakDamage || 1;
+    b.streakDamage = o.streakDamage || 0;
     b.splashDiag = !!o.splashDiag;
     b.streakPierce = o.streakPierce || 0;
     b.fragBonus = o.fragBonus || 0;
@@ -93,7 +100,7 @@ class BallSystem {
   }
 
   damageCapFor(s) {
-    return s.damage + 8 + (s.ramp > 0 ? 10 : 0);
+    return s.damage + 6;
   }
 
   fire(def, x, y, angle) {
@@ -110,7 +117,9 @@ class BallSystem {
       damageCap: this.damageCapFor(s),
       ramp: s.ramp,
       rampSize: s.rampSize,
-      color: def.color,
+      color: s.color || def.color,
+      form: s.form,
+      rules: s,
       pierce: s.pierce,
       pierceEvery: s.pierceEvery,
       pierceCap: s.pierceCap,
@@ -158,6 +167,9 @@ class BallSystem {
    * same ratio the ball had already wound itself up to.
    */
   applyStats(b, s) {
+    b.rules = s;
+    b.form = s.form || 'seed';
+    if (s.color) b.color = s.color;
     const damageGrowth = b.baseDamage == null ? 0 : Math.max(0, b.damage - b.baseDamage);
     b.baseDamage = s.damage;
     b.damageCap = this.damageCapFor(s);
@@ -185,7 +197,8 @@ class BallSystem {
     b.chargeOnSteel = s.chargeOnSteel;
     b.pierceEvery = s.pierceEvery;
     b.pierceCap = s.pierceCap;
-    b.pierce = Math.min(b.pierce, b.pierceCap);
+    b.pierce = Math.min(b.pierceCap, b.pierce + Math.max(0, s.pierce - (b.startPierce || 0)));
+    b.startPierce = s.pierce;
     b.pierceCharge = s.pierceCharge;
     b.explode = s.explode;
     b.explodeDmg = s.explodeDmg;
@@ -224,10 +237,13 @@ class BallSystem {
   }
 
   update(dt) {
+    this.reactions.update(dt);
     const list = this.list;
     this.updating = true;
     for (let i = list.length - 1; i >= 0; i--) {
       const b = list[i];
+      b.life -= dt;
+      if (b.life <= 0) { this.remove(i); continue; }
       const maxStep = Math.max(2.5, b.r * 0.9);
       let steps = Math.ceil((b.baseSpeed * dt) / maxStep);
       if (steps < 1) steps = 1;
@@ -356,7 +372,7 @@ class BallSystem {
       return;
     }
 
-    this.world.damageAt(cx, cy, b.damage);
+    this.reactions.hit(b, cx, cy, b.damage);
     if (b.impactR > 0) this.impactBlast(b);
 
     if (b.pierce > 0) {
@@ -474,8 +490,8 @@ class BallSystem {
     // Heavy rounds crush the pixels around the one they hit; Aftershock makes
     // that crush grow with every bounce.
     if (b.splashGrow > 0 && b.splash < b.splashCap) b.splash += b.splashGrow;
-    if (b.splash > 0) {
-      this.crush(cx, cy, b.splash, b.splashDiag);
+    if (b.splash > 0 && b.bounces % (b.rules.crushEvery || 1) === 0) {
+      this.crush(cx, cy, b.splash, b.splashDiag, b);
       if (b.crushBlast > 0) {
         const hits = this.world.explode(b.x, b.y, b.crushBlast, b.crushBlastDmg);
         if (hits > 0) this.game.onImpactBlast(b.x, b.y, b.crushBlast, b.color);
@@ -497,7 +513,7 @@ class BallSystem {
     if (b.spawnEvery > 0 && b.bounces % b.spawnEvery === 0) this.spawnFrags(b, b.spawnCount);
 
     // Bounce streak: long-lived ricochets grow stronger and slightly bigger.
-    if (b.bounces % b.streakEvery === 0) {
+    if (b.streakDamage > 0 && b.bounces % b.streakEvery === 0) {
       if (b.damage < b.damageCap) b.damage = Math.min(b.damageCap, b.damage + b.streakDamage);
       b.r = Math.min(b.radiusCap, b.r + b.baseRadius * 0.02);
       if (b.streakPierce > 0 && b.pierce < b.pierceCap) {
@@ -509,8 +525,8 @@ class BallSystem {
     if (b.harvestEvery > 0 && b.bounces % b.harvestEvery === 0) this.game.onBounceHarvest();
   }
 
-  crush(cx, cy, amount, diag) {
-    const w = this.world;
+  crush(cx, cy, amount, diag, b) {
+    const w = { damageAt: (x, y, damage) => this.reactions.hit(b, x, y, damage, true) };
     w.damageAt(cx + 1, cy, amount);
     w.damageAt(cx - 1, cy, amount);
     w.damageAt(cx, cy + 1, amount);
@@ -524,7 +540,7 @@ class BallSystem {
   }
 
   pulse(b) {
-    const hits = this.world.explode(b.x, b.y, b.pulseR, b.pulseDmg);
+    const hits = this.reactions.burst(b, b.x, b.y, b.pulseR, b.pulseDmg);
     if (hits > 0) this.game.onPulse(b.x, b.y, b.pulseR, b.color);
   }
 
@@ -556,7 +572,10 @@ class BallSystem {
         damage: dmg,
         damageCap: dmg + 8,
         color: b.color,
-        streakEvery: b.streakEvery,
+        form: b.rules.chipFrost ? 'hail' : 'seed',
+        life: b.rules.fragLife || 18,
+        pierce: b.rules.chipPierce || 0,
+        rules: b.rules.chipFrost ? { freezeEvery: 1, freezeDuration: b.rules.freezeDuration } : {},
       });
     }
   }

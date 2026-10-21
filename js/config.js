@@ -83,266 +83,199 @@ const WALL_RGB = [242, 247, 252];
 const SHARD_RGB = [255, 209, 102];
 const SHARD_CSS = '#ffd166';
 
-// Three standard rounds, all available from the first launch.
+// Stable IDs preserve selected balls and existing field saves.
+const TECH_VERSION = 2;
 const BALL_TYPES = [
-  {
-    id: 'arc', name: 'Arc', cost: 12, cooldown: 0.30, damage: 1, speed: 330, radius: 5, color: '#38bdf8',
-    short: 'chain lightning',
-    desc: 'A balanced energy round. Bounce streaks sharpen it, chain sparks spread the damage and pulses shake loose nearby pixels.',
-  },
-  {
-    id: 'maul', name: 'Maul', cost: 60, cooldown: 0.70, damage: 3, speed: 235, radius: 8, color: '#fb923c',
-    splash: 1, short: 'heavy crush',
-    desc: 'A slow, heavy round. Every impact crushes the surrounding pixels; steel makes it heavier and its first hit can detonate.',
-  },
-  {
-    id: 'drift', name: 'Drift', cost: 34, cooldown: 0.42, damage: 1, speed: 460, radius: 3.5, color: '#c084fc',
-    pierceGrow: { every: 2, cap: 3 }, short: 'fast pierce',
-    desc: 'A fast, slim round. Every bounce winds it up, every second bounce teaches it to pierce, and later it sheds sparks.',
-  },
+  { id: 'arc', name: 'Rime', cost: 12, cooldown: 0.45, damage: 1, speed: 300, radius: 5, color: '#7dd3fc',
+    short: 'frost / crystal', desc: 'A quiet frost seed. Every fourth hit freezes a surviving pixel for 4 seconds. Grow into a Glacier or a piercing Hail core.' },
+  { id: 'maul', name: 'Cairn', cost: 28, cooldown: 0.85, damage: 2, speed: 220, radius: 7, color: '#d6a66b',
+    short: 'earth / fracture', desc: 'A deliberate stone round. Starts with single-target damage. Choose spreading Tectonics or the focused Obelisk to break prepared targets.' },
+  { id: 'drift', name: 'Volt', cost: 18, cooldown: 0.55, damage: 1, speed: 390, radius: 4, color: '#c4b5fd',
+    short: 'charge / velocity', desc: 'A nimble spark with no starting pierce or speed growth. Become a chaining Storm or a precision Rail round.' },
 ];
+const BALL_BY_ID = Object.fromEntries(BALL_TYPES.map(b => [b.id, b]));
 
-const BALL_BY_ID = {};
-for (const b of BALL_TYPES) BALL_BY_ID[b.id] = b;
+// Effects add per rank. "set" effects select a behavior or visual form.
+const TECH_NODES = [];
+function addTech(id, tree, name, cost, maxLevel, req, x, y, desc, effects = {}, extra = {}) {
+  TECH_NODES.push({ id, tree, name, cost, maxLevel, req: req.map(r => typeof r === 'string' ? { id: r, lvl: 1 } : r),
+    x, y, desc, effects, kind: 'upgrade', ...extra });
+}
+function ballTree(tree, basics, paths) {
+  const def = BALL_BY_ID[tree];
+  addTech(tree, tree, def.name, 0, 1, [], 110, 365, def.desc, {}, { kind: 'ball', ball: tree });
+  basics.forEach(([key, name, desc, effects, max = 2], i) =>
+    addTech(tree + '_' + key, tree, name, 1, max, [tree], 330, 140 + 150 * i, desc, effects));
+  paths.forEach((p, branch) => {
+    const start = branch ? 450 : 110;
+    const choice = tree + '_' + p.key;
+    const rival = tree + '_' + paths[1 - branch].key;
+    addTech(choice, tree, p.name, 3, 1, [tree + '_' + p.req], 560, start + 100,
+      p.desc, p.effects, { excludes: [rival], form: p.form, tag: 'SPECIALIZATION' });
+    p.nodes.forEach(([key, name, desc, effects, max = 1], i) => {
+      const previous = i < 3 ? choice : tree + '_' + p.nodes[i - 3][0];
+      addTech(tree + '_' + key, tree, name, i < 3 ? 2 : 3, max, [previous],
+        i < 3 ? 800 : 1040, start + (i % 3) * 100, desc, effects);
+    });
+    const cap = tree + '_' + p.cap[0];
+    addTech(cap, tree, p.cap[1], 6, 1, p.nodes.slice(3).map(n => tree + '_' + n[0]),
+      1280, start + 100, p.cap[2], p.cap[3], { form: p.cap[4], tag: 'EVOLUTION' });
+    addTech(tree + '_' + p.link[0], tree, p.link[1], 4, 1, [cap, p.link[2]],
+      1510, start + 100, p.link[3], p.link[4], { tag: 'CROSS-BALL' });
+  });
+}
+ballTree('arc', [
+  ['dmg', 'Cold Press', '+1 direct damage per rank.', { damage: 1 }],
+  ['frost', 'Cold Front', 'Freeze every 3 hits at rank 1, every 2 at rank 2.', { freezeRate: 1 }],
+  ['duration', 'Deep Winter', '+3 seconds of freeze duration per rank.', { freezeDuration: 3 }],
+  ['spd', 'Slipstream', '+8% launch speed per rank.', { speedBonus: 0.08 }],
+], [
+  { key: 'glacier', name: 'Glacier', req: 'frost', form: 'glacier',
+    desc: 'Choose Glacier. Freeze every hit; seals off Hail. Visual: six-point ice crystal.',
+    effects: { set: { freezeEvery: 1 } },
+    nodes: [
+      ['hoarfrost', 'Hoarfrost', 'Each freeze also freezes one adjacent pixel.', { freezeSpread: 1 }],
+      ['brittle', 'Brittle', 'Frozen targets take +1 direct damage from ANY ball per rank.', { brittle: 1 }, 2],
+      ['snowpulse', 'Snowglobe', 'Every 12 bounces, a 1.4-pixel frost pulse deals 1 damage and freezes survivors.', { set: { pulseEvery: 12, pulseR: 70, pulseDmg: 1, frostPulse: true } }],
+      ['whiteout', 'Whiteout', 'Freeze two more neighboring pixels on a direct freeze.', { freezeSpread: 2 }],
+      ['permafrost', 'Permafrost', '+6 freeze seconds; frost coatings remember their strongest Brittle bonus.', { freezeDuration: 6 }],
+      ['coldheart', 'Cold Heart', 'Frost pulses arrive 4 bounces sooner and reach 0.6 pixels farther.', { pulseFaster: 4, pulseRadius: 30 }],
+    ],
+    cap: ['winter', 'Winter Crown', 'Evolution: crowned crystal. Kills on frozen targets freeze up to 4 neighbors. +2 direct damage.', { frostBloom: 4, damage: 2 }, 'winter'],
+    link: ['icefault', 'Ice Fault', 'maul_fault', 'Rime deals +4 damage to faulted pixels and refreshes their fault duration.', { faultBonus: 4, refreshFault: 1 }],
+  },
+  { key: 'hail', name: 'Hail', req: 'spd', form: 'hail',
+    desc: 'Choose Hail. Start with 1 pierce; seals off Glacier. Visual: a sharp ice diamond.',
+    effects: { pierce: 1, pierceCap: 2 },
+    nodes: [
+      ['needle', 'Ice Needle', 'Regain 1 pierce every 6 bounces.', { set: { pierceEvery: 6 } }],
+      ['coldedge', 'Cold Edge', '+2 direct damage against frozen pixels per rank.', { frozenBonus: 2 }, 2],
+      ['splinter', 'Splinter', 'Every 18 bounces, shed a small ice chip. Chips last 18 seconds and cannot reproduce.', { set: { spawnEvery: 18, spawnCount: 1 } }],
+      ['sleet', 'Sleet', 'Ice Needle recharges 2 bounces sooner; +1 pierce cap.', { pierceFaster: 2, pierceCap: 1 }],
+      ['glasscut', 'Glass Cutter', 'Direct hits shatter frozen pixels with 12 health or less. Tougher ice takes +4 damage.', { shatterLimit: 12, frozenBonus: 4 }],
+      ['diamond', 'Diamond Dust', 'Chips inherit freezing every hit and last 6 seconds longer.', { chipFrost: 1, fragLife: 6 }],
+    ],
+    cap: ['comet', 'Comet Heart', 'Evolution: twin-tailed comet. +20% speed, +2 pierce cap; ice chips deal +2 damage.', { speedBonus: 0.2, pierceCap: 2, fragBonus: 2 }, 'comet'],
+    link: ['supercool', 'Supercool', 'drift_charge', 'Rime hits on charged targets freeze every hit and add +3 damage without consuming charge.', { supercool: 1 }],
+  },
+]);
+ballTree('maul', [
+  ['dmg', 'Dense Core', '+1 direct damage per rank.', { damage: 1 }],
+  ['fault', 'Fault Line', 'Every third direct hit marks a surviving pixel: +1 damage from ANY ball for 8 seconds. Rank 2: +2.', { faultPower: 1 }],
+  ['streak', 'Patience', 'Earn +1 damage every 32 bounces at rank 1, every 24 at rank 2. Growth capped at +6.', { streakUnlock: 1 }],
+  ['spd', 'Stone Skipper', '+8% launch speed per rank.', { speedBonus: 0.08 }],
+], [
+  { key: 'tectonic', name: 'Tectonic', req: 'fault', form: 'tectonic',
+    desc: 'Choose Tectonic. Every fourth bounce crushes 4 neighbors for 1 damage. Seals off Obelisk. Visual: layered stone.',
+    effects: { splash: 1, set: { crushEvery: 4 } },
+    nodes: [
+      ['earthstrike', 'Earth Strike', 'Direct impacts instantly shatter ANY frozen pixel. Crush hits gain +3 damage against ice.', { shatterLimit: 40, areaFrozenBonus: 3 }],
+      ['tremor', 'Tremor', '+1 crush damage per rank.', { splash: 1 }, 2],
+      ['strata', 'Strata', 'Steel ricochets add +1 damage and +3% radius, capped.', { ramp: 1, rampSize: 0.03 }],
+      ['faultwave', 'Fault Wave', 'Area hits mark surviving pixels with your Fault Line bonus.', { areaFault: 1 }],
+      ['aftershock', 'Aftershock', 'Crush every 2 bounces instead of every 4; crush also hits diagonals.', { set: { crushEvery: 2, splashDiag: true } }],
+      ['grounding', 'Grounding', 'A charged direct target discharges in a 1.5-pixel burst for 3 damage. Consumes charge.', { groundBurst: 3 }],
+    ],
+    cap: ['worldbreaker', 'Worldbreaker', 'Evolution: orbiting stone plates. Every 10 bounces, a 2-pixel quake deals 3 damage and uses your ice/fault synergies.', { set: { pulseEvery: 10, pulseR: 100, pulseDmg: 3 } }, 'worldbreaker'],
+    link: ['avalanche', 'Avalanche', 'arc_frost', 'Shattering a frozen pixel freezes up to 3 neighbors for 5 seconds, setting up the next strike.', { avalanche: 3 }],
+  },
+  { key: 'obelisk', name: 'Obelisk', req: 'dmg', form: 'obelisk',
+    desc: 'Choose Obelisk. +2 direct damage, -10% speed. Seals off Tectonic. Visual: a carved stone diamond.',
+    effects: { damage: 2, speedBonus: -0.1 },
+    nodes: [
+      ['chisel', 'Chisel', '+3 direct damage against faulted pixels per rank.', { faultBonus: 3 }, 2],
+      ['icepick', 'Ice Pick', '+5 direct damage against frozen pixels.', { frozenBonus: 5 }],
+      ['anvil', 'Anvil', 'Steel ricochets add +1 damage, capped at +6 growth.', { ramp: 1 }],
+      ['execution', 'Execution', 'Direct hits execute a pixel below 25% of its original health.', { execute: 0.25 }],
+      ['monolith', 'Monolith', 'Frozen targets take double direct damage after bonuses.', { frozenMult: 1 }],
+      ['lodestone', 'Lodestone', 'Charged targets take +5 direct damage; consumes the charge.', { chargeConsume: 5 }],
+    ],
+    cap: ['titan', 'Titan Core', 'Evolution: runed monolith. +4 damage; hitting faulted pixels grants one pierce (cap 2).', { damage: 4, faultPierce: 1, pierceCap: 2 }, 'titan'],
+    link: ['fulcrum', 'Fulcrum', 'drift_charge', 'Charged direct hits discharge a 1.5-pixel burst for 4 damage. Consumes charge.', { groundBurst: 4 }],
+  },
+]);
+ballTree('drift', [
+  ['dmg', 'Live Wire', '+1 direct damage per rank.', { damage: 1 }],
+  ['charge', 'Static Ink', 'Every third direct hit charges a survivor for 8 seconds. Rank 2: 14 seconds.', { chargeDuration: 6 }],
+  ['spd', 'Tailwind', '+8% launch speed per rank.', { speedBonus: 0.08 }],
+  ['focus', 'Focus', 'Start with +1 pierce and +1 pierce cap per rank. No automatic recharge yet.', { pierce: 1, pierceCap: 1 }],
+], [
+  { key: 'storm', name: 'Storm', req: 'charge', form: 'storm',
+    desc: 'Choose Storm. Charge every direct hit. Seals off Rail. Visual: a sparking ring.',
+    effects: { set: { staticEvery: 1 } },
+    nodes: [
+      ['arcwire', 'Arc Wire', 'Every fourth direct hit jumps to up to 2 nearby pixels for 1 damage.', { chainCount: 2, chainDamage: 1, set: { chainEvery: 4 } }],
+      ['conductor', 'Ice Conductor', 'Frozen direct targets take +2 damage and always trigger your chain.', { frozenBonus: 2, iceChain: 1 }],
+      ['capacitor', 'Capacitor', '+6 seconds of charge duration and +1 chain damage.', { chargeDuration: 6, chainDamage: 1 }],
+      ['fork', 'Forked Sky', 'Chains reach two more pixels and apply charge to survivors.', { chainCount: 2, chainCharge: 1 }],
+      ['thunder', 'Thunderclap', 'Direct hits on already charged pixels discharge +4 damage and consume their charge.', { chargeConsume: 4 }],
+      ['relay', 'Relay', 'Chain every 2 direct hits instead of 4; chain search radius +1 pixel.', { set: { chainEvery: 2 }, chainRadius: 1 }],
+    ],
+    cap: ['tempest', 'Tempest Halo', 'Evolution: twin electric halos. +2 chain damage; chain jumps deal +3 against frozen pixels.', { chainDamage: 2, areaFrozenBonus: 3 }, 'tempest'],
+    link: ['faultgrid', 'Fault Grid', 'maul_fault', 'Chains deal +4 damage to faulted pixels.', { areaFaultBonus: 4 }],
+  },
+  { key: 'rail', name: 'Rail', req: 'focus', form: 'rail',
+    desc: 'Choose Rail. +12% speed; recharge one pierce every 6 bounces. Seals off Storm. Visual: a violet needle.',
+    effects: { speedBonus: 0.12, set: { pierceEvery: 6 } },
+    nodes: [
+      ['windup', 'Windup', '+2% speed per bounce, up to 1.35x launch speed.', { charge: 0.02, chargeCapBonus: 0.35 }],
+      ['tracer', 'Tracer', '+2 direct damage against charged pixels per rank without consuming charge.', { chargedBonus: 2 }, 2],
+      ['ricochet', 'Steel Spring', 'Steel ricochets add +4% speed; +0.15x speed cap.', { chargeOnSteel: 0.04, chargeCapBonus: 0.15 }],
+      ['tunnel', 'Tunnel Drive', 'Pierce recharges 3 bounces sooner; +2 pierce cap.', { pierceFaster: 3, pierceCap: 2 }],
+      ['phase', 'Phase Drive', 'Piercing hits add +2% speed; +0.15x speed cap.', { pierceCharge: 0.02, chargeCapBonus: 0.15 }],
+      ['prism', 'Prism Wake', 'Every 20 bounces shed 2 short-lived sparks. Each spark starts with 1 pierce.', { set: { spawnEvery: 20, spawnCount: 2 }, chipPierce: 1 }],
+    ],
+    cap: ['lightspeed', 'Aurora Lance', 'Evolution: luminous lance and twin wakes. +20% speed, +2 direct damage, +1 pierce cap.', { speedBonus: 0.2, damage: 2, pierceCap: 1 }, 'lightspeed'],
+    link: ['coldrail', 'Cold Rail', 'arc_frost', 'Direct hits against frozen pixels gain +6 damage and restore 1 pierce.', { frozenBonus: 6, icePierce: 1 }],
+  },
+]);
 
-const TECH_NODES = [
-  // --------------------------------------------------------------- Field
-  {
-    id: 'core', tree: 'field', kind: 'core', name: 'Field Core',
-    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'The shared core. Every field upgrade branches from here.',
-  },
-  {
-    id: 'damage', tree: 'field', kind: 'upgrade', name: 'Overcharge',
-    cost: 1, maxLevel: 3, req: [{ id: 'core', lvl: 1 }], x: 292, y: 92,
-    desc: '+1 damage on every ball.',
-  },
-  {
-    id: 'yield', tree: 'field', kind: 'upgrade', name: 'Refinery',
-    cost: 1, maxLevel: 4, req: [{ id: 'core', lvl: 1 }], x: 292, y: 260,
-    desc: '+25% currency from every pixel destroyed.',
-  },
-  {
-    id: 'discount', tree: 'field', kind: 'upgrade', name: 'Fabricator',
-    cost: 2, maxLevel: 3, req: [{ id: 'core', lvl: 1 }], x: 292, y: 428,
-    desc: 'Ball launch cost reduced by 12% per level.',
-  },
-  {
-    id: 'volley', tree: 'field', kind: 'upgrade', name: 'Volley',
-    cost: 2, maxLevel: 2, req: [{ id: 'damage', lvl: 1 }], x: 512, y: 92,
-    desc: '+1 ball per shot, fanned out.',
-  },
-  {
-    id: 'momentum', tree: 'field', kind: 'upgrade', name: 'Momentum',
-    cost: 2, maxLevel: 2, req: [{ id: 'yield', lvl: 1 }], x: 512, y: 260,
-    desc: 'Bounce streaks arrive 2 bounces sooner for every ball.',
-  },
-  {
-    id: 'bounty', tree: 'field', kind: 'upgrade', name: 'Bounty',
-    cost: 2, maxLevel: 3, req: [{ id: 'discount', lvl: 1 }], x: 512, y: 428,
-    desc: '+1 currency for every pixel destroyed.',
-  },
-  {
-    id: 'harvest', tree: 'field', kind: 'upgrade', name: 'Kinetic Harvest',
-    cost: 2, maxLevel: 2, req: [{ id: 'momentum', lvl: 1 }], x: 752, y: 260,
-    desc: 'Every ball earns +1 currency every 24 bounces (-12 per level).',
-  },
-  {
-    id: 'resonance', tree: 'field', kind: 'upgrade', name: 'Resonance Field',
-    cost: 2, maxLevel: 2, req: [{ id: 'volley', lvl: 1 }], x: 752, y: 92,
-    desc: 'Balls without a pulse release a shockwave every 12 bounces (-4 per level).',
-  },
-  {
-    id: 'mitosis', tree: 'field', kind: 'upgrade', name: 'Mitosis',
-    cost: 3, maxLevel: 2, req: [{ id: 'resonance', lvl: 1 }], x: 980, y: 92,
-    desc: 'Balls without a spawner shed a spark every 16 bounces (-5 per level).',
-  },
-
-  // ----------------------------------------------------------------- Arc
-  {
-    id: 'arc', tree: 'arc', kind: 'ball', ball: 'arc', name: 'Arc',
-    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'Balanced chain round. Click to equip.',
-  },
-  {
-    id: 'arc_dmg', tree: 'arc', kind: 'upgrade', name: 'Overcharge',
-    cost: 1, maxLevel: 3, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 92,
-    desc: '+1 damage per level.',
-  },
-  {
-    id: 'arc_spd', tree: 'arc', kind: 'upgrade', name: 'Ion Drive',
-    cost: 1, maxLevel: 2, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 260,
-    desc: '+12% launch and bounce speed per level.',
-  },
-  {
-    id: 'arc_streak', tree: 'arc', kind: 'upgrade', name: 'Momentum',
-    cost: 1, maxLevel: 2, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 428,
-    desc: 'Streak damage arrives 3 bounces sooner per level.',
-  },
-  {
-    id: 'arc_pulse', tree: 'arc', kind: 'upgrade', name: 'Resonance',
-    cost: 2, maxLevel: 2, req: [{ id: 'arc_dmg', lvl: 1 }], x: 512, y: 92,
-    desc: 'Release a shockwave every 10 bounces (-2 per level).',
-  },
-  {
-    id: 'arc_pierce', tree: 'arc', kind: 'upgrade', name: 'Phase',
-    cost: 2, maxLevel: 2, req: [{ id: 'arc_spd', lvl: 1 }], x: 512, y: 260,
-    desc: '+1 pierce per level.',
-  },
-  {
-    id: 'arc_streakdmg', tree: 'arc', kind: 'upgrade', name: 'Kinetic Edge',
-    cost: 2, maxLevel: 2, req: [{ id: 'arc_streak', lvl: 1 }], x: 512, y: 428,
-    desc: '+1 damage from each bounce streak per level.',
-  },
-  {
-    id: 'arc_chain', tree: 'arc', kind: 'upgrade', name: 'Chain Reaction',
-    cost: 2, maxLevel: 2, req: [{ id: 'arc_pulse', lvl: 1 }], x: 752, y: 92,
-    desc: 'Shed a bouncing spark every 14 bounces (-3 per level).',
-  },
-  {
-    id: 'arc_streakpierce', tree: 'arc', kind: 'upgrade', name: 'Momentum Pierce',
-    cost: 3, maxLevel: 1, req: [{ id: 'arc_streak', lvl: 2 }, { id: 'arc_pierce', lvl: 1 }], x: 752, y: 260,
-    desc: 'Synergy: every streak also grants +1 pierce.',
-  },
-  {
-    id: 'arc_conductor', tree: 'arc', kind: 'upgrade', name: 'Conductor',
-    cost: 3, maxLevel: 2, req: [{ id: 'arc_chain', lvl: 1 }, { id: 'arc_streakdmg', lvl: 1 }], x: 752, y: 428,
-    desc: 'Synergy: Chain sparks deal +1 damage per level.',
-  },
-  {
-    id: 'arc_overload', tree: 'arc', kind: 'upgrade', name: 'Overload',
-    cost: 3, maxLevel: 1, req: [{ id: 'arc_chain', lvl: 2 }, { id: 'arc_pulse', lvl: 2 }], x: 980, y: 92,
-    desc: 'Synergy: pulses gain +1 damage, +0.5 px radius and come 2 bounces sooner.',
-  },
-
-  // ---------------------------------------------------------------- Maul
-  {
-    id: 'maul', tree: 'maul', kind: 'ball', ball: 'maul', name: 'Maul',
-    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'Heavy crush round. Click to equip.',
-  },
-  {
-    id: 'maul_dmg', tree: 'maul', kind: 'upgrade', name: 'Overcharge',
-    cost: 1, maxLevel: 3, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 92,
-    desc: '+1 damage per level.',
-  },
-  {
-    id: 'maul_splash', tree: 'maul', kind: 'upgrade', name: 'Crush',
-    cost: 1, maxLevel: 2, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 260,
-    desc: '+1 crush damage to the pixels around each impact per level.',
-  },
-  {
-    id: 'maul_spd', tree: 'maul', kind: 'upgrade', name: 'Siege Engine',
-    cost: 1, maxLevel: 2, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 428,
-    desc: '+10% launch and bounce speed per level.',
-  },
-  {
-    id: 'maul_impact', tree: 'maul', kind: 'upgrade', name: 'Shockwave',
-    cost: 2, maxLevel: 2, req: [{ id: 'maul_dmg', lvl: 1 }], x: 512, y: 92,
-    desc: 'Every bounce releases a shockwave (0.9 px, +0.35 px per level).',
-  },
-  {
-    id: 'maul_ramp', tree: 'maul', kind: 'upgrade', name: 'Ramp',
-    cost: 2, maxLevel: 2, req: [{ id: 'maul_splash', lvl: 1 }], x: 512, y: 260,
-    desc: 'Steel ricochets add +1 damage and +6% size per level.',
-  },
-  {
-    id: 'maul_fracture', tree: 'maul', kind: 'upgrade', name: 'Fracture',
-    cost: 2, maxLevel: 1, req: [{ id: 'maul_splash', lvl: 2 }], x: 512, y: 428,
-    desc: 'The crush also hits diagonals.',
-  },
-  {
-    id: 'maul_blast', tree: 'maul', kind: 'upgrade', name: 'Blast Charge',
-    cost: 2, maxLevel: 2, req: [{ id: 'maul_impact', lvl: 1 }], x: 752, y: 92,
-    desc: 'Detonate once on the first impact (2.5 px +1 per level).',
-  },
-  {
-    id: 'maul_seismic', tree: 'maul', kind: 'upgrade', name: 'Seismic Crush',
-    cost: 3, maxLevel: 1, req: [{ id: 'maul_impact', lvl: 1 }, { id: 'maul_fracture', lvl: 1 }], x: 752, y: 260,
-    desc: 'Synergy: every crush also releases a small shockwave.',
-  },
-  {
-    id: 'maul_aftershock', tree: 'maul', kind: 'upgrade', name: 'Aftershock',
-    cost: 3, maxLevel: 1, req: [{ id: 'maul_ramp', lvl: 1 }, { id: 'maul_splash', lvl: 2 }], x: 752, y: 428,
-    desc: 'Synergy: each bounce adds +1 crush damage, up to +4.',
-  },
-  {
-    id: 'maul_quake', tree: 'maul', kind: 'upgrade', name: 'Quake',
-    cost: 3, maxLevel: 1, req: [{ id: 'maul_blast', lvl: 2 }, { id: 'maul_seismic', lvl: 1 }], x: 980, y: 260,
-    desc: 'Synergy: release a 2.2 px shockwave every 6 bounces.',
-  },
-
-  // --------------------------------------------------------------- Drift
-  {
-    id: 'drift', tree: 'drift', kind: 'ball', ball: 'drift', name: 'Drift',
-    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'Fast pierce round. Click to equip.',
-  },
-  {
-    id: 'drift_dmg', tree: 'drift', kind: 'upgrade', name: 'Overcharge',
-    cost: 1, maxLevel: 3, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 92,
-    desc: '+1 damage per level.',
-  },
-  {
-    id: 'drift_spd', tree: 'drift', kind: 'upgrade', name: 'Ion Drive',
-    cost: 1, maxLevel: 3, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 260,
-    desc: '+12% launch and bounce speed per level.',
-  },
-  {
-    id: 'drift_pierce', tree: 'drift', kind: 'upgrade', name: 'Focus',
-    cost: 1, maxLevel: 2, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 428,
-    desc: '+1 pierce and +1 pierce cap per level.',
-  },
-  {
-    id: 'drift_needle', tree: 'drift', kind: 'upgrade', name: 'Needle',
-    cost: 2, maxLevel: 1, req: [{ id: 'drift_pierce', lvl: 1 }], x: 512, y: 92,
-    desc: 'Pierce grows on every bounce instead of every second bounce.',
-  },
-  {
-    id: 'drift_charge', tree: 'drift', kind: 'upgrade', name: 'Elasticity',
-    cost: 2, maxLevel: 2, req: [{ id: 'drift_spd', lvl: 1 }], x: 512, y: 260,
-    desc: '+4% speed per bounce and a higher speed cap per level.',
-  },
-  {
-    id: 'drift_kick', tree: 'drift', kind: 'upgrade', name: 'Kick',
-    cost: 2, maxLevel: 2, req: [{ id: 'drift_pierce', lvl: 1 }], x: 512, y: 428,
-    desc: 'Steel ricochets add +3% speed per level.',
-  },
-  {
-    id: 'drift_pulse', tree: 'drift', kind: 'upgrade', name: 'Resonance',
-    cost: 2, maxLevel: 2, req: [{ id: 'drift_needle', lvl: 1 }], x: 752, y: 92,
-    desc: 'Release a shockwave every 8 bounces (-2 per level).',
-  },
-  {
-    id: 'drift_spawn', tree: 'drift', kind: 'upgrade', name: 'Budding',
-    cost: 2, maxLevel: 2, req: [{ id: 'drift_charge', lvl: 1 }], x: 752, y: 260,
-    desc: 'Shed a bouncing spark every 12 bounces (-2 per level).',
-  },
-  {
-    id: 'drift_phase', tree: 'drift', kind: 'upgrade', name: 'Phase Drive',
-    cost: 3, maxLevel: 1, req: [{ id: 'drift_kick', lvl: 1 }, { id: 'drift_charge', lvl: 1 }], x: 752, y: 428,
-    desc: 'Synergy: every pierce hit adds +2% speed.',
-  },
-  {
-    id: 'drift_pulsespawn', tree: 'drift', kind: 'upgrade', name: 'Chain Pulse',
-    cost: 3, maxLevel: 1, req: [{ id: 'drift_pulse', lvl: 1 }, { id: 'drift_spawn', lvl: 1 }], x: 980, y: 92,
-    desc: 'Synergy: pulses also shed a spark.',
-  },
-  {
-    id: 'drift_overwind', tree: 'drift', kind: 'upgrade', name: 'Overwind',
-    cost: 3, maxLevel: 1, req: [{ id: 'drift_charge', lvl: 2 }], x: 980, y: 260,
-    desc: 'Synergy: +40% speed cap.',
-  },
+addTech('core', 'field', 'Field Core', 0, 1, [], 110, 365, 'Shared economy and cross-ball reactions.', {}, { kind: 'core' });
+const fieldNodes = [
+  ['yield', 'Refinery', 1, 3, 'core', 330, 140, '+15% currency from destroyed pixels per rank.'],
+  ['discount', 'Fabricator', 1, 3, 'core', 330, 365, 'Reduce launch prices by 8% per rank.'],
+  ['damage', 'Tempered Cores', 3, 2, 'core', 330, 590, '+1 direct damage to all primary balls per rank.'],
+  ['bounty', 'Reclamation', 2, 2, 'yield', 560, 140, '+1 currency per destroyed pixel per rank.'],
+  ['duration', 'Long Memory', 2, 2, 'discount', 560, 365, '+2 seconds to new freeze, fault and charge coatings per rank.'],
+  ['momentum', 'Momentum', 2, 2, 'damage', 560, 590, 'Earn +1 streak damage every 36 bounces; rank 2 every 28. Growth capped at +6.'],
+  ['salvage', 'Reaction Salvage', 3, 2, 'bounty', 800, 140, 'A direct kill using a status reaction earns +2 currency per rank.'],
+  ['lattice', 'Shared Lattice', 3, 1, 'duration', 800, 365, 'Direct hits on pixels with 2 or more statuses gain +2 damage.'],
+  ['volley', 'Twin Launch', 5, 1, 'momentum', 800, 590, 'Launch two primary balls per shot. Blocks Focused Launch.', { excludes: ['focused'] }],
+  ['focused', 'Focused Launch', 5, 1, 'momentum', 1040, 690, '+3 direct damage to primary balls. Blocks Twin Launch.', { excludes: ['volley'] }],
+  ['sustain', 'Patient Harvest', 3, 2, 'salvage', 1040, 140, '+1 currency every 40 bounces per primary ball; rank 2 every 28.'],
+  ['convergence', 'Convergence', 5, 1, 'lattice', 1040, 365, 'Direct hits on pixels with all 3 statuses gain another +6 damage.'],
+  ['echo', 'Echo Chamber', 4, 1, 'volley', 1280, 590, 'Primary balls with a pulse gain +1 pulse damage and +0.3 pixels of radius.'],
+  ['precision', 'Precision Tools', 4, 1, 'focused', 1280, 690, 'Primary direct hits execute pixels below 15% original health.'],
+  ['balance', 'Fieldcraft', 6, 1, 'convergence', 1280, 365, 'Status reaction kills earn +5 more currency. +2 seconds to new coatings.'],
 ];
+for (const [id, name, cost, max, req, x, y, desc, extra] of fieldNodes)
+  addTech(id, 'field', name, cost, max, [req], x, y, desc, {}, extra);
+const TECH_BY_ID = Object.fromEntries(TECH_NODES.map(n => [n.id, n]));
 
-const TECH_BY_ID = {};
-for (const n of TECH_NODES) TECH_BY_ID[n.id] = n;
-
-function techNodeCost(node, level) {
-  if (node.cost === 0) return 0;
-  return Math.max(1, Math.round(node.cost * Math.pow(1.5, level)));
+// Old trees cannot map fairly onto mutually exclusive specializations.
+// Refund historical rank prices while preserving the field and economy.
+function migrateTechSave(data) {
+  if (!data || data.techVersion === TECH_VERSION) return data || {};
+  const oldCosts = {
+    damage: 1, yield: 1, discount: 2, volley: 2, momentum: 2, bounty: 2, harvest: 2, resonance: 2, mitosis: 3,
+    arc_dmg: 1, arc_spd: 1, arc_streak: 1, arc_pulse: 2, arc_pierce: 2, arc_streakdmg: 2,
+    arc_chain: 2, arc_streakpierce: 3, arc_conductor: 3, arc_overload: 3,
+    maul_dmg: 1, maul_splash: 1, maul_spd: 1, maul_impact: 2, maul_ramp: 2, maul_fracture: 2,
+    maul_blast: 2, maul_seismic: 3, maul_aftershock: 3, maul_quake: 3,
+    drift_dmg: 1, drift_spd: 1, drift_pierce: 1, drift_needle: 2, drift_charge: 2, drift_kick: 2,
+    drift_pulse: 2, drift_spawn: 2, drift_phase: 3, drift_pulsespawn: 3, drift_overwind: 3,
+  };
+  let refund = 0;
+  for (const [id, cost] of Object.entries(oldCosts)) {
+    const ranks = Math.min(4, Math.max(0, Number(data.levels && data.levels[id]) | 0));
+    for (let rank = 0; rank < ranks; rank++) refund += Math.max(1, Math.round(cost * Math.pow(1.5, rank)));
+  }
+  return { ...data, techVersion: TECH_VERSION, levels: {}, skill: (Number(data.skill) || 0) + refund, techRefund: refund };
 }
 
+function techNodeCost(node, level) {
+  return node.cost === 0 ? 0 : Math.max(1, Math.round(node.cost * Math.pow(1.5, level)));
+}
 function ballPrice(baseCost, costMult, demand) {
   const heat = Math.min(PRICING.cap, Math.max(0, demand || 0));
   return Math.max(1, Math.round(baseCost * costMult * (1 + heat * PRICING.perUnit)));

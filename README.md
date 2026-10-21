@@ -38,10 +38,10 @@ npm test         # world generation / fog / physics / save round-trip checks
   same neutral grey; losing health heats it yellow → orange → red. Health is
   1–40 and climbs with distance from the starting arena: the centre is fragile,
   the outer edges are the toughest.
-* **Balls never stop.** Every round ricochets off pixels and steel forever,
-  damaging whatever it touches. Every bounce feeds the ball's own gimmick and
-  every few bounces the streak adds damage and size. Late in a run there can be
-  thousands of balls in flight — the HUD counts them.
+* **Primary balls never stop.** Rounds ricochet off pixels and steel forever.
+  They start at 1–2 damage with no free area damage, pierce or damage growth.
+  Growth and special powers require upgrades. Fragments expire after 18 seconds
+  (24 with Diamond Dust) and cannot reproduce.
 * **Fog of war:** fog is pitch black. A pixel only shows once a neighbouring cell
   is broken; each break reveals a 3-pixel-deep band, and pixels still touching
   the fog are drawn a little darker. Ground you have already cleared is lit as a
@@ -72,29 +72,48 @@ direction comes from the drag.
 
 | Ball | Ability |
 | --- | --- |
-| **Arc** | Balanced energy round. Bounce streaks sharpen it, Chain Reaction sheds sparks and Resonance drops shockwaves. |
-| **Maul** | Slow heavy round. Every impact crushes nearby pixels, steel ramps its damage and size, and Blast Charge detonates on the first impact. |
-| **Drift** | Fast slim round. Winds up speed on every bounce, learns pierce, then sheds sparks and pulses. |
+| **Rime** | 1 damage, 300 speed, 12 currency. Every fourth direct hit freezes a survivor for 4 seconds. Choose Glacier support or piercing Hail. |
+| **Cairn** | 2 damage, 220 speed, 28 currency. A modest single-target stone. Choose Tectonic crushes or Obelisk precision. |
+| **Volt** | 1 damage, 390 speed, 18 currency. A nimble spark. Choose Storm charge/chains or Rail speed/pierce. |
 
 ## Tech
 
-Four trees share one panel:
+Four trees hold **81 purchasable upgrades**: 22 per ball and 15 shared Field
+upgrades. Each ball has four foundations, two mutually exclusive specializations,
+six supporting nodes and an evolution per specialization, and two cross-ball
+capstones. Choose Glacier **or** Hail, Tectonic **or** Obelisk, Storm **or** Rail.
+The rival branch and its descendants become sealed. Field also offers a choice
+between Twin Launch and Focused Launch.
 
-* **Arc** — a balanced tree around streak damage, pierce, chain sparks and
-  shockwaves. **Momentum Pierce** makes every streak grant pierce;
-  **Conductor** makes chain sparks hit harder; **Overload** supercharges pulses.
-* **Maul** — a heavy tree around crush, shockwaves, steel ramp and detonation.
-  **Seismic Crush** adds a shockwave to every crush; **Aftershock** grows crush
-  damage with every bounce; **Quake** releases periodic shockwaves.
-* **Drift** — a speed/pierce tree. **Needle** pierces on every bounce,
-  **Elasticity** and **Kick** wind up speed, and **Phase Drive** turns pierce
-  hits into more speed.
-* **Field** — shared economy and power: damage, yield, discount, volley,
-  momentum, bounty, kinetic harvest, resonance field and mitosis. There are no
-  size or reload nodes.
+Some combinations:
 
-Nodes cost ✦, not ◆. Purchased upgrades apply immediately, including to every
-ball already in flight.
+* **Freeze → Earth Strike:** Rime freezes; Tectonic Cairn instantly shatters any
+  frozen breakable pixel. Avalanche freezes neighbors after a shatter.
+* **Freeze → Ice Conductor:** frozen targets immediately trigger Volt's chain.
+  Forked Sky charges nearby survivors; Tempest strengthens chains against ice.
+* **Charge → Grounding:** Cairn consumes Volt's charge to trigger a local burst.
+  Obelisk can instead use Lodestone for focused charged-target damage.
+* **Fault → Ice Fault / Fault Grid:** Cairn's amber fault cracks improve later
+  direct hits from every ball. Rime and Volt can specialize in exploiting them.
+* **Three coatings → Convergence:** stack frost, fault and charge for shared
+  direct damage bonuses. Reaction Salvage turns status kills into more currency.
+* **Hail / Rail:** rechargeable pierce, ice chips, speed from steel, and
+  pierce-driven acceleration offer focused alternatives to area builds.
+
+Glacier crystals, Hail diamonds, layered stone, carved obelisks, Storm rings and
+Rail needles replace the starting orbs. Six evolutions add crowns, orbiting
+plates, halos or twin wakes. The field, tree previews and dock reflect upgrades.
+Cached silhouettes remain active at high ball counts.
+
+Scroll the tree or use the upgrade selector. Select a node to inspect its full
+effect and prerequisites, then use its purchase button. Dashed red lines mark
+exclusive choices. Nodes cost ✦, not ◆. Purchases immediately update primary
+balls already in flight. Temporary pixel coatings use simulation time and are
+not persisted; the field, upgrades and economy are saved as before.
+
+Older saves keep their field, currency and selected ball. The previous trees
+are reset once, refunding their historical skill-point costs so players can
+choose a compatible new build. Internal ball IDs remain stable.
 
 ## Sound
 
@@ -110,6 +129,7 @@ volume sliders; **M** mutes. Volumes and mute state persist.
 * Balls are sub-stepped swept-ish colliders (no tunnelling even at 4000 u/s),
   with a hard cap of 7000 live rounds. Rendering culls off-screen balls and
   switches to a quad batching path above 2000 balls.
-* Measured in Chromium: 7000 balls at ~144 fps on a 1675×809 viewport.
+* Pixel coatings are sparse and capped at 10,000 active cells. Chain searches
+  and area reactions have bounded reach and cannot recursively trigger chains.
 * An adaptive quality step drops trails/particles if frame time climbs.
 * The save file is the 1 MB health array deflated (~50 KB) plus meta.

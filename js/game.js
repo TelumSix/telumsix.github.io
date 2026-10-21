@@ -2,7 +2,7 @@
 
 class Game {
   constructor(saveData) {
-    this.saveData = saveData || {};
+    this.saveData = migrateTechSave(saveData || {});
     this.seed = (this.saveData.seed >>> 0) || (((Math.random() * 0x7fffffff) | 0) || 7);
 
     this.world = new World(this.seed);
@@ -108,6 +108,7 @@ class Game {
     } else {
       this.world.total = Math.max(1, this.world.total);
     }
+    if (this.saveData.techRefund) this.toast('Ball trees rebuilt: refunded ' + this.saveData.techRefund + ' skill points. Open Tech to choose your build.', 'gold');
     this.displayCurrency = this.currency;
     this.refreshHud();
     this.renderer.updateMinimap();
@@ -296,135 +297,20 @@ class Game {
 
   /** Final stats for a ball after shared field tech and its own tree. */
   ballStats(def) {
-    const tech = this.tech;
-    const eff = this.effects;
-    const P = CFG.PIXEL;
-    const lv = k => tech.level(def.id + '_' + k);
-
-    const s = {
-      damage: def.damage + eff.damageBonus + lv('dmg'),
-      speed: def.speed * (1 + 0.12 * lv('spd')),
-      radius: def.radius,
-      pierce: def.pierce || 0,
-      explode: (def.explode || 0) * P,
-      explodeDmg: def.explodeDmg || 0,
-      split: def.split || 0,
-      ramp: def.ramp || 0,
-      rampSize: def.rampSize || 0,
-      charge: def.charge || 0,
-      chargeCap: def.chargeCap || 1,
-      streakEvery: Math.max(4, (def.streakEvery || 12) - eff.streakBonus - 3 * lv('streak')),
-      splash: def.splash || 0,
-      splashCap: def.splash || 0,
-      impactR: 0,
-      impactDmg: 1,
-      pulseEvery: 0,
-      pulseR: 0,
-      pulseDmg: 0,
-      spawnEvery: 0,
-      spawnCount: 0,
-      pierceEvery: def.pierceGrow ? def.pierceGrow.every : 0,
-      pierceCap: def.pierceGrow ? def.pierceGrow.cap : 0,
-      streakDamage: 1 + lv('streakdmg'),
-      splashDiag: false,
-      chargeOnSteel: 0,
-      pulseSpawn: 0,
-      harvestEvery: eff.harvestEvery,
-      fragBonus: 0,
-      streakPierce: 0,
-      splashGrow: 0,
-      crushBlast: 0,
-      crushBlastDmg: 1,
-      pierceCharge: 0,
-    };
-
-    if (def.id === 'arc') {
-      if (lv('pulse') > 0) {
-        s.pulseEvery = Math.max(4, 10 - 2 * lv('pulse'));
-        s.pulseR = (1.2 + 0.25 * lv('pulse')) * P;
-        s.pulseDmg = 1 + (lv('pulse') > 1 ? 1 : 0);
-      }
-      if (lv('pierce') > 0) {
-        s.pierce += lv('pierce');
-        s.pierceCap = Math.max(s.pierceCap, s.pierce + 3);
-      }
-      if (lv('chain') > 0) {
-        s.spawnEvery = Math.max(4, 14 - 3 * lv('chain'));
-        s.spawnCount = 1;
-      }
-      s.streakPierce = lv('streakpierce') > 0 ? 1 : 0;
-      s.fragBonus = lv('conductor');
-      if (lv('overload') > 0) {
-        s.pulseDmg += 1;
-        s.pulseR += 0.5 * P;
-        s.pulseEvery = Math.max(3, s.pulseEvery - 2);
-      }
-    } else if (def.id === 'maul') {
-      if (lv('impact') > 0) {
-        s.impactR = (0.9 + 0.35 * lv('impact')) * P;
-        s.impactDmg = 1 + (lv('impact') > 1 ? 1 : 0);
-      }
-      s.ramp = lv('ramp');
-      s.rampSize = 0.06 * lv('ramp');
-      s.splashDiag = lv('fracture') > 0;
-      if (lv('fracture') > 1) s.splash += 1;
-      if (lv('blast') > 0) {
-        s.explode = (2.5 + lv('blast')) * P;
-        s.explodeDmg = 1 + lv('blast');
-      }
-      if (lv('seismic') > 0) {
-        s.crushBlast = 1.2 * P;
-        s.crushBlastDmg = 1;
-      }
-      if (lv('aftershock') > 0) s.splashGrow = 1;
-      s.splashCap = s.splash + (lv('aftershock') > 0 ? 4 : 0);
-      if (lv('quake') > 0) {
-        s.pulseEvery = 6;
-        s.pulseR = 2.2 * P;
-        s.pulseDmg = 2;
-      }
-    } else if (def.id === 'drift') {
-      s.pierce += lv('pierce');
-      s.pierceCap += lv('pierce');
-      if (lv('needle') > 0) s.pierceEvery = 1;
-      if (lv('charge') > 0) {
-        s.charge = 0.04 * lv('charge');
-        s.chargeCap = 1.5 + 0.2 * lv('charge');
-      }
-      s.chargeOnSteel = 0.03 * lv('kick');
-      if (lv('kick') > 0) s.chargeCap = Math.max(s.chargeCap, 1.5);
-      if (lv('pulse') > 0) {
-        s.pulseEvery = Math.max(4, 8 - 2 * lv('pulse'));
-        s.pulseR = 1.1 * P;
-        s.pulseDmg = 1;
-      }
-      if (lv('spawn') > 0) {
-        s.spawnEvery = Math.max(4, 12 - 2 * lv('spawn'));
-        s.spawnCount = 1;
-      }
-      s.pulseSpawn = lv('pulsespawn');
-      if (lv('overwind') > 0) s.chargeCap += 0.4;
-      s.pierceCharge = 0.02 * lv('phase');
-    }
-
-    // Shared field powers only fill gaps the ball's own tree left open.
-    if (s.pulseEvery === 0 && eff.resonanceEvery > 0) {
-      s.pulseEvery = eff.resonanceEvery;
-      s.pulseR = P * 1.1;
-      s.pulseDmg = 1;
-    }
-    if (s.spawnEvery === 0 && eff.mitosisEvery > 0) {
-      s.spawnEvery = eff.mitosisEvery;
-      s.spawnCount = 1;
-    }
-    return s;
+    return this.tech.ballStats(def);
   }
 
   ballPreview(def) {
     const s = this.ballStats(def);
     const parts = [`${s.damage} dmg`, `${Math.round(s.speed)} spd`, `r${s.radius.toFixed(1)}`];
     if (s.pierce > 0) parts.push(`${s.pierce} pierce`);
-    if (s.pierceEvery > 0) parts.push('pierce grows');
+    if (s.form !== 'seed') parts.unshift(s.formName);
+    if (s.freezeEvery) parts.push('freeze / ' + s.freezeEvery + ' hits');
+    if (s.faultPower) parts.push('fault / 3 hits');
+    if (s.staticEnabled) parts.push('charge / ' + s.staticEvery + ' hits');
+    if (s.shatterLimit) parts.push('shatter ice');
+    if (s.chainCount) parts.push(s.chainCount + ' chain targets');
+    if (s.pierceEvery > 0) parts.push('pierce recharges');
     if (s.pierceCharge > 0) parts.push('pierce \u2192 speed');
     if (s.charge > 0) parts.push(`+${Math.round(s.charge * 100)}%/bounce`);
     if (s.splash > 0) parts.push(`${s.splash} crush`);
@@ -445,6 +331,21 @@ class Game {
     if (now - this.lastBlastFx < 90) return;
     this.lastBlastFx = now;
     this.fx.ring(wx, wy, color || '#fda4af', radius * 1.35);
+  }
+
+  onChain(x, y, nx, ny, color) {
+    if (this.renderer.quality < 1 || this.fx.particles.length > CFG.MAX_PARTICLES * 0.8) return;
+    for (let i = 0; i <= 6; i++) {
+      const t = i / 6;
+      this.fx.particle((x + 0.5 + (nx - x) * t) * CFG.PIXEL,
+        (y + 0.5 + (ny - y) * t) * CFG.PIXEL, 0, 0, 0.18, color, 3, 1, 0);
+    }
+  }
+
+  onReaction(x, y, label, color) {
+    if (this.time - (this.lastReactionFx || -1) < 0.18) return;
+    this.lastReactionFx = this.time;
+    this.fx.text((x + 0.5) * CFG.PIXEL, (y + 0.2) * CFG.PIXEL, label, color, 11);
   }
 
   onPulse(wx, wy, radius, color) {
@@ -974,7 +875,9 @@ class Game {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'ball-card';
-      btn.style.setProperty('--bc', def.color);
+      const visual = this.ballStats(def);
+      btn.dataset.form = visual.form;
+      btn.style.setProperty('--bc', visual.color);
       btn.dataset.id = def.id;
       btn.innerHTML =
         `<span class="bc-dot" style="--c:${def.color}"></span>` +
@@ -984,6 +887,8 @@ class Game {
         `<span class="bc-cd"><i></i></span>`;
       btn.title = `${def.desc}  ·  ${this.ballPreview(def)}  ·  ${this.ballCooldown(def).toFixed(2)}s reload · every launch adds a demand surcharge that cools while the ball rests`;
       btn._cdFill = btn.querySelector('.bc-cd > i');
+      btn.querySelector('.bc-dot').style.setProperty('--c', visual.color);
+      if (visual.form !== 'seed') btn.querySelector('.bc-sub').textContent = visual.formName;
       btn._costEl = btn.querySelector('.bc-cost');
       btn.addEventListener('click', () => this.selectBall(def.id));
       list.appendChild(btn);
@@ -1024,6 +929,12 @@ class Game {
   /* ---------------------------------------------------------------- tech */
 
   buyNode(node) {
+    const blocked = this.tech.blockedBy(node);
+    if (blocked.length) {
+      this.toast('Sealed by ' + blocked.map(id => TECH_BY_ID[id].name).join(', ') + '.', 'bad');
+      this.sfx.error();
+      return;
+    }
     if (this.tech.maxed(node)) {
       this.toast('Already at max level.', 'bad');
       this.sfx.error();
@@ -1082,6 +993,7 @@ class Game {
 
     const meta = {
       v: 5,
+      techVersion: TECH_VERSION,
       seed: this.seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),
@@ -1122,6 +1034,7 @@ class Game {
     const seed = (Math.random() * 0x7fffffff) | 0;
     const meta = {
       v: 5,
+      techVersion: TECH_VERSION,
       seed,
       currency: Math.floor(this.currency),
       skill: Math.floor(this.skill),

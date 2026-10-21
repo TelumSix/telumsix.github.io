@@ -485,7 +485,16 @@ kbd {
 .muted { color: var(--muted); }
 .small { font-size: 11.5px; }
 
-.tech-panel { display: flex; flex-direction: column; gap: 12px; }
+.tech-panel { display: flex; flex-direction: column; gap: 12px; width: min(96vw, 1500px); }
+.tree-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.tree-toolbar select { font: inherit; color: var(--text); background: #101c30; border: 1px solid var(--border-strong); border-radius: 8px; padding: 7px 10px; max-width: 100%; }
+.ti-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; }
+.ti-actions .btn { white-space: normal; }
+.ti-actions .btn:disabled { opacity: 0.45; cursor: default; }
+.ball-card[data-form="glacier"] .bc-dot, .ball-card[data-form="winter"] .bc-dot { border-radius: 2px; clip-path: polygon(50% 0, 60% 30%, 95% 15%, 75% 50%, 100% 80%, 60% 70%, 50% 100%, 40% 70%, 0 80%, 25% 50%, 5% 15%, 40% 30%); }
+.ball-card[data-form="hail"] .bc-dot, .ball-card[data-form="comet"] .bc-dot, .ball-card[data-form="rail"] .bc-dot, .ball-card[data-form="lightspeed"] .bc-dot { border-radius: 0; transform: rotate(-35deg); clip-path: polygon(100% 50%, 0 0, 25% 50%, 0 100%); }
+.ball-card[data-form="tectonic"] .bc-dot, .ball-card[data-form="worldbreaker"] .bc-dot, .ball-card[data-form="obelisk"] .bc-dot, .ball-card[data-form="titan"] .bc-dot { border-radius: 3px; transform: rotate(45deg); border: 2px solid #fff7; }
+.ball-card[data-form="storm"] .bc-dot, .ball-card[data-form="tempest"] .bc-dot { background: transparent; border: 3px solid var(--c); outline: 1px solid var(--c); outline-offset: 3px; }
 
 .tabs {
   display: flex;
@@ -523,16 +532,19 @@ kbd {
 
 .tree-wrap.hidden { display: none; }
 
+.tree-wrap { overflow: auto; max-height: 52vh; flex: 0 0 auto; scrollbar-color: #405579 #070c16; }
+
 #treeCanvas {
   display: block;
   width: 100%;
-  aspect-ratio: 1160 / 520;
+  min-width: 1400px;
+  aspect-ratio: 1640 / 760;
   cursor: pointer;
-  touch-action: none;
+  touch-action: pan-x pan-y;
 }
 
 .tree-info {
-  height: 74px;
+  min-height: 118px;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -544,14 +556,15 @@ kbd {
   background: rgba(6, 10, 18, 0.7);
   font-size: 12.5px;
   line-height: 1.45;
-  overflow: hidden;
+  overflow: visible;
   flex: 0 0 auto;
 }
 .ti-head {
   display: flex;
   align-items: baseline;
   gap: 7px;
-  white-space: nowrap;
+  flex-wrap: wrap;
+  white-space: normal;
   overflow: hidden;
 }
 .ti-head > b { flex: 0 0 auto; }
@@ -569,10 +582,7 @@ kbd {
   text-overflow: ellipsis;
 }
 .ti-desc {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  overflow: hidden;
+  display: block;
   font-size: 11.8px;
   line-height: 1.4;
   color: var(--muted);

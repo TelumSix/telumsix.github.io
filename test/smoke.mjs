@@ -12,7 +12,7 @@ const ctx = vm.createContext({
   performance, setTimeout, clearTimeout,
 });
 
-for (const f of ['js/util.js', 'js/config.js', 'js/world.js', 'js/balls.js']) {
+for (const f of ['js/util.js', 'js/config.js', 'js/world.js', 'js/reactions.js', 'js/balls.js']) {
   vm.runInContext(fs.readFileSync(path.join(root, f), 'utf8'), ctx, { filename: f });
 }
 
