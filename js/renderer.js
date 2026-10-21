@@ -74,13 +74,14 @@ class Renderer {
 
   buildLut() {
     const shades = 8;
-    const health = new Uint8Array(11 * 11 * shades * 3);
+    const stride = CFG.HEALTH_STRIDE;
+    const health = new Uint8Array(stride * stride * shades * 3);
     for (let m = 1; m <= CFG.MAX_HEALTH; m++) {
       for (let h = 1; h <= m; h++) {
         const c = pixelColorRGB(m, h);
         for (let v = 0; v < shades; v++) {
           const f = 0.86 + (v / (shades - 1)) * 0.24;
-          const o = (((m * 11 + h) * shades) + v) * 3;
+          const o = (((m * stride + h) * shades) + v) * 3;
           health[o] = clamp(Math.round(c[0] * f), 0, 255);
           health[o + 1] = clamp(Math.round(c[1] * f), 0, 255);
           health[o + 2] = clamp(Math.round(c[2] * f), 0, 255);
@@ -110,11 +111,12 @@ class Renderer {
   }
 
   buildColor2D() {
-    const c2 = new Uint8Array(11 * 11 * 3);
+    const stride = CFG.HEALTH_STRIDE;
+    const c2 = new Uint8Array(stride * stride * 3);
     for (let m = 1; m <= CFG.MAX_HEALTH; m++) {
       for (let h = 1; h <= m; h++) {
         const c = pixelColorRGB(m, h);
-        const o = (m * 11 + h) * 3;
+        const o = (m * stride + h) * 3;
         c2[o] = c[0];
         c2[o + 1] = c[1];
         c2[o + 2] = c[2];
@@ -263,7 +265,7 @@ class Renderer {
           } else {
             let v = (i ^ (i >>> 5) ^ (i >>> 11)) & 7;
             if (nearFog(gx, gy)) v >>= 1;
-            const p = ((maxHealth[i] * 11 + h) * 8 + v) * 3;
+            const p = ((maxHealth[i] * CFG.HEALTH_STRIDE + h) * 8 + v) * 3;
             data[o] = lut.health[p];
             data[o + 1] = lut.health[p + 1];
             data[o + 2] = lut.health[p + 2];
@@ -603,7 +605,7 @@ class Renderer {
     ctx.setLineDash([]);
 
     // anchor ring, with a reload sweep
-    const ringR = 6 + aim.power * 7;
+    const ringR = 13;
     ctx.globalAlpha = 0.95 * alpha;
     ctx.lineWidth = 2.2;
     ctx.beginPath();
@@ -677,7 +679,7 @@ class Renderer {
         } else if (w.visible[i] !== 0 && w.wall[i] !== 0) {
           r += WALL_RGB[0]; g += WALL_RGB[1]; b += WALL_RGB[2];
         } else if (w.visible[i] !== 0 && w.health[i] !== 0) {
-          const o = (w.maxHealth[i] * 11 + w.health[i]) * 3;
+          const o = (w.maxHealth[i] * CFG.HEALTH_STRIDE + w.health[i]) * 3;
           r += color2d[o]; g += color2d[o + 1]; b += color2d[o + 2];
         } else if (w.open[i] !== 0) {
           r += 17; g += 23; b += 33;

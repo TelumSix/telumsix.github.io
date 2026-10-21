@@ -55,6 +55,12 @@ class World {
     return this.wall[i] !== 0 || this.health[i] !== 0;
   }
 
+  /** Cleared ground: revealed empty space, never fog or a solid pixel. */
+  isCleared(x, y) {
+    if (!this.inBounds(x, y)) return false;
+    return this.open[y * this.n + x] !== 0;
+  }
+
   /* ---------------------------------------------------------- generation */
 
   generate() {
@@ -111,6 +117,8 @@ class World {
     const noiseB = this.makeNoise(17, rnd);
     const coarse = new Float32Array(CN * CN);
     const half = n * 0.5;
+    const edgeDist = Math.SQRT2 * half;
+    const peak = CFG.MAX_HEALTH - 1;
 
     for (let gy = 0; gy < CN; gy++) {
       const y = gy * STEP;
@@ -120,11 +128,12 @@ class World {
         const dx = x - half;
         const dy = y - half;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        const t = Math.min(1, dist / 620);
+        // Health climbs with distance from the arena out to the map corners.
+        const t = Math.min(1, dist / edgeDist);
         const na = World.bilinear(noiseA, 64, (x / n) * 63, ny);
         const nb = World.bilinear(noiseB, 17, (x / n) * 16, (y / n) * 16);
         const nv = na * 0.62 + nb * 0.38;
-        coarse[gy * CN + gx] = 1 + Math.pow(t, 1.22) * 8.6 + (nv - 0.5) * 2.9;
+        coarse[gy * CN + gx] = 1 + Math.pow(t, 1.12) * peak + (nv - 0.5) * 3.2;
       }
     }
 
@@ -703,8 +712,9 @@ class World {
   }
 
   /**
-   * Walls are generated as open shapes, but guarantee it: flood fill the
-   * breakable field and open a gap into anything unreachable.
+   * Invariant: indestructible steel never encloses a region. Flood fill every
+   * non-steel cell from the arena (breakable pixels count as passable because
+   * they can be dug out), then open a gap into anything unreachable.
    */
   fixConnectivity() {
     const n = this.n;

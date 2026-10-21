@@ -16,7 +16,7 @@ const CFG = {
   MAX_ZOOM: 2.6,
   FREE_R: 7,
   REVEAL: 3,
-  MAX_HEALTH: 10,
+  MAX_HEALTH: 20,
   SAVE_KEY: 'pixelfield.save.v4',
   MUTE_KEY: 'pixelfield.muted',
   VOLUME_KEY: 'pixelfield.volumes',
@@ -26,24 +26,35 @@ const CFG = {
 CFG.CELLS = CFG.GRID * CFG.GRID;
 CFG.CHUNK_WORLD = CFG.CHUNK * CFG.PIXEL;
 CFG.MINI_CELLS = CFG.MINI * CFG.MINI;
+CFG.HEALTH_STRIDE = CFG.MAX_HEALTH + 1;
+
+/**
+ * Launch pricing is a demand surcharge rather than a runaway multiplier.
+ * Every launch adds one unit of demand; demand cools while that ball rests,
+ * so rapid fire gets expensive but the price always settles back to base.
+ * At the cap the ball costs 1 + cap * perUnit times its base price.
+ */
+const PRICING = {
+  gain: 1,
+  coolPerSec: 0.6,
+  cap: 8,
+  perUnit: 0.2,
+};
 
 /**
  * Pixels start grey. The grey shade encodes toughness (max health); damage
  * heats the pixel yellow -> orange -> red. Steel is white.
+ * Generated so the palette always covers the full 1..MAX_HEALTH range.
  */
-const FRESH_GREYS = [
-  null,
-  [106, 118, 136],
-  [116, 128, 146],
-  [126, 138, 156],
-  [136, 148, 165],
-  [146, 158, 175],
-  [156, 168, 184],
-  [166, 178, 193],
-  [176, 187, 202],
-  [186, 196, 210],
-  [196, 205, 218],
-];
+const FRESH_GREYS = [null];
+for (let i = 1; i <= CFG.MAX_HEALTH; i++) {
+  const t = (i - 1) / Math.max(1, CFG.MAX_HEALTH - 1);
+  FRESH_GREYS.push([
+    Math.round(92 + t * 112),
+    Math.round(104 + t * 110),
+    Math.round(124 + t * 102),
+  ]);
+}
 
 const DAMAGE_YELLOW = [255, 214, 102];
 const DAMAGE_ORANGE = [249, 115, 22];
@@ -78,51 +89,22 @@ const WALL_RGB = [242, 247, 252];
 const SHARD_RGB = [255, 209, 102];
 const SHARD_CSS = '#ffd166';
 
-// Every ball is built around what happens when it bounces.
+// Three standard rounds, all available from the first launch.
 const BALL_TYPES = [
   {
-    id: 'spark', name: 'Spark', cost: 10, cooldown: 0.25, damage: 1, speed: 300, radius: 5, color: '#38bdf8',
-    short: '1 dmg', desc: 'The classic ricochet. Cheap, quick, and it sharpens with every long streak.',
+    id: 'arc', name: 'Arc', cost: 12, cooldown: 0.30, damage: 1, speed: 330, radius: 5, color: '#38bdf8',
+    short: 'chain lightning',
+    desc: 'A balanced energy round. Bounce streaks sharpen it, chain sparks spread the damage and pulses shake loose nearby pixels.',
   },
   {
-    id: 'rubber', name: 'Rubber', cost: 42, cooldown: 0.45, damage: 1, speed: 240, radius: 4.5, color: '#4ade80',
-    charge: 0.05, chargeCap: 1.7, short: 'speeds up',
-    desc: 'Picks up 5% speed on every bounce (up to +70%) — slow at first, frantic once it is loose.',
+    id: 'maul', name: 'Maul', cost: 60, cooldown: 0.70, damage: 3, speed: 235, radius: 8, color: '#fb923c',
+    splash: 1, short: 'heavy crush',
+    desc: 'A slow, heavy round. Every impact crushes the surrounding pixels; steel makes it heavier and its first hit can detonate.',
   },
   {
-    id: 'slug', name: 'Slug', cost: 70, cooldown: 0.55, damage: 3, speed: 250, radius: 8, color: '#fb923c',
-    splash: 1, short: '3 dmg · crush',
-    desc: 'A heavy round that cracks the pixels around every impact as well as the one it hits.',
-  },
-  {
-    id: 'bouncer', name: 'Bouncer', cost: 95, cooldown: 0.55, damage: 1, speed: 320, radius: 5, color: '#a3e635',
-    ramp: 1, rampSize: 0.12, short: 'steel ramp',
-    desc: 'Every steel ricochet makes it heavier and bigger (+1 damage, +12% size, up to +10).',
-  },
-  {
-    id: 'bumper', name: 'Bumper', cost: 130, cooldown: 0.6, damage: 1, speed: 290, radius: 6, color: '#f43f5e',
-    impact: { r: 0.9, dmg: 1 }, short: 'shockwave',
-    desc: 'Shockwave ball: every bounce cracks a small area instead of a single pixel.',
-  },
-  {
-    id: 'ricochet', name: 'Ricochet', cost: 180, cooldown: 0.6, damage: 1, speed: 470, radius: 3.5, color: '#c084fc',
-    pierceGrow: { every: 2, cap: 4 }, short: 'pierce grows',
-    desc: 'Fast and slim. Every second bounce it learns to pierce, and it keeps both tricks.',
-  },
-  {
-    id: 'echo', name: 'Echo', cost: 240, cooldown: 0.75, damage: 1, speed: 310, radius: 5, color: '#22d3ee',
-    pulse: { every: 3, r: 1.4, dmg: 1 }, short: 'pulse / 3',
-    desc: 'Releases a shockwave every third bounce, damaging everything nearby.',
-  },
-  {
-    id: 'spore', name: 'Spore', cost: 340, cooldown: 0.85, damage: 1, speed: 370, radius: 6, color: '#fbbf24',
-    spawn: { every: 8, count: 2 }, short: 'splits / 8',
-    desc: 'Sheds two bouncing sparks every eighth bounce. The field fills up fast.',
-  },
-  {
-    id: 'nova', name: 'Nova', cost: 700, cooldown: 1.5, damage: 3, speed: 290, radius: 10, color: '#f8fafc',
-    pulse: { every: 10, r: 5, dmg: 4 }, short: 'pulse / 10',
-    desc: 'Every tenth bounce it detonates a five-pixel crater. A late-game field clearer.',
+    id: 'drift', name: 'Drift', cost: 34, cooldown: 0.42, damage: 1, speed: 460, radius: 3.5, color: '#c084fc',
+    pierceGrow: { every: 2, cap: 3 }, short: 'fast pierce',
+    desc: 'A fast, slim round. Every bounce winds it up, every second bounce teaches it to pierce, and later it sheds sparks.',
   },
 ];
 
@@ -130,188 +112,234 @@ const BALL_BY_ID = {};
 for (const b of BALL_TYPES) BALL_BY_ID[b.id] = b;
 
 const TECH_NODES = [
-  // ---------------------------------------------------------- Arsenal
+  // --------------------------------------------------------------- Field
   {
-    id: 'spark', tree: 'arsenal', kind: 'ball', ball: 'spark', name: 'Spark',
+    id: 'core', tree: 'field', kind: 'core', name: 'Field Core',
     cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'Your starting round. Cheap, quick, reliable.',
+    desc: 'The shared core. Every field upgrade branches from here.',
   },
   {
-    id: 'rubber', tree: 'arsenal', kind: 'ball', ball: 'rubber', name: 'Rubber',
-    cost: 1, maxLevel: 1, req: [{ id: 'spark', lvl: 1 }], x: 292, y: 92,
-    desc: 'Speeds up on every bounce until it is a blur.',
-  },
-  {
-    id: 'slug', tree: 'arsenal', kind: 'ball', ball: 'slug', name: 'Slug',
-    cost: 1, maxLevel: 1, req: [{ id: 'spark', lvl: 1 }], x: 292, y: 260,
-    desc: 'Heavy round · 3 damage and a crush on every bounce.',
-  },
-  {
-    id: 'bouncer', tree: 'arsenal', kind: 'ball', ball: 'bouncer', name: 'Bouncer',
-    cost: 2, maxLevel: 1, req: [{ id: 'spark', lvl: 1 }], x: 292, y: 428,
-    desc: 'Grows heavier and bigger with every steel ricochet.',
-  },
-  {
-    id: 'bumper', tree: 'arsenal', kind: 'ball', ball: 'bumper', name: 'Bumper',
-    cost: 2, maxLevel: 1, req: [{ id: 'rubber', lvl: 1 }], x: 512, y: 92,
-    desc: 'Every bounce shakes loose the pixels around it.',
-  },
-  {
-    id: 'ricochet', tree: 'arsenal', kind: 'ball', ball: 'ricochet', name: 'Ricochet',
-    cost: 3, maxLevel: 1, req: [{ id: 'slug', lvl: 1 }], x: 512, y: 260,
-    desc: 'Learns to pierce a little more with every bounce.',
-  },
-  {
-    id: 'echo', tree: 'arsenal', kind: 'ball', ball: 'echo', name: 'Echo',
-    cost: 3, maxLevel: 1, req: [{ id: 'bouncer', lvl: 1 }], x: 512, y: 428,
-    desc: 'Pulses a shockwave every third bounce.',
-  },
-  {
-    id: 'spore', tree: 'arsenal', kind: 'ball', ball: 'spore', name: 'Spore',
-    cost: 4, maxLevel: 1, req: [{ id: 'ricochet', lvl: 1 }, { id: 'echo', lvl: 1 }], x: 752, y: 92,
-    desc: 'Sheds bouncing sparks as it ricochets.',
-  },
-  {
-    id: 'nova', tree: 'arsenal', kind: 'ball', ball: 'nova', name: 'Nova',
-    cost: 6, maxLevel: 1, req: [{ id: 'spore', lvl: 1 }], x: 752, y: 260,
-    desc: 'Every tenth bounce, a five-pixel crater.',
-  },
-
-  // --------------------------------------------------------- Upgrades
-  {
-    id: 'core', tree: 'upgrades', kind: 'core', name: 'Field Core',
-    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
-    desc: 'The core of your operation. Every upgrade branches from here.',
-  },
-  {
-    id: 'damage', tree: 'upgrades', kind: 'upgrade', name: 'Overcharge',
-    cost: 1, maxLevel: 3, req: [{ id: 'core', lvl: 1 }], x: 306, y: 92,
+    id: 'damage', tree: 'field', kind: 'upgrade', name: 'Overcharge',
+    cost: 1, maxLevel: 3, req: [{ id: 'core', lvl: 1 }], x: 292, y: 92,
     desc: '+1 damage on every ball.',
   },
   {
-    id: 'yield', tree: 'upgrades', kind: 'upgrade', name: 'Refinery',
-    cost: 1, maxLevel: 4, req: [{ id: 'core', lvl: 1 }], x: 306, y: 260,
+    id: 'yield', tree: 'field', kind: 'upgrade', name: 'Refinery',
+    cost: 1, maxLevel: 4, req: [{ id: 'core', lvl: 1 }], x: 292, y: 260,
     desc: '+25% currency from every pixel destroyed.',
   },
   {
-    id: 'rapid', tree: 'upgrades', kind: 'upgrade', name: 'Autoloader',
-    cost: 1, maxLevel: 2, req: [{ id: 'core', lvl: 1 }], x: 306, y: 428,
-    desc: 'Launch 30% faster.',
+    id: 'discount', tree: 'field', kind: 'upgrade', name: 'Fabricator',
+    cost: 2, maxLevel: 3, req: [{ id: 'core', lvl: 1 }], x: 292, y: 428,
+    desc: 'Ball launch cost reduced by 12% per level.',
   },
   {
-    id: 'volley', tree: 'upgrades', kind: 'upgrade', name: 'Volley',
-    cost: 2, maxLevel: 3, req: [{ id: 'damage', lvl: 1 }], x: 530, y: 92,
+    id: 'volley', tree: 'field', kind: 'upgrade', name: 'Volley',
+    cost: 2, maxLevel: 2, req: [{ id: 'damage', lvl: 1 }], x: 512, y: 92,
     desc: '+1 ball per shot, fanned out.',
   },
   {
-    id: 'discount', tree: 'upgrades', kind: 'upgrade', name: 'Fabricator',
-    cost: 2, maxLevel: 3, req: [{ id: 'yield', lvl: 2 }], x: 530, y: 260,
-    desc: 'Ball launch cost reduced by 12%.',
+    id: 'momentum', tree: 'field', kind: 'upgrade', name: 'Momentum',
+    cost: 2, maxLevel: 2, req: [{ id: 'yield', lvl: 1 }], x: 512, y: 260,
+    desc: 'Bounce streaks arrive 2 bounces sooner for every ball.',
   },
   {
-    id: 'radius', tree: 'upgrades', kind: 'upgrade', name: 'Heavy Core',
-    cost: 1, maxLevel: 3, req: [{ id: 'rapid', lvl: 1 }], x: 530, y: 428,
-    desc: '+15% ball radius.',
-  },
-  {
-    id: 'velocity', tree: 'upgrades', kind: 'upgrade', name: 'Railgun',
-    cost: 1, maxLevel: 3, req: [{ id: 'volley', lvl: 1 }], x: 756, y: 92,
-    desc: '+15% ball speed.',
-  },
-  {
-    id: 'momentum', tree: 'upgrades', kind: 'upgrade', name: 'Momentum',
-    cost: 2, maxLevel: 3, req: [{ id: 'discount', lvl: 1 }], x: 756, y: 260,
-    desc: '+2 bounces of momentum: the damage bonus from a bounce streak arrives sooner.',
-  },
-  {
-    id: 'bounty', tree: 'upgrades', kind: 'upgrade', name: 'Bounty',
-    cost: 2, maxLevel: 3, req: [{ id: 'discount', lvl: 2 }], x: 756, y: 428,
+    id: 'bounty', tree: 'field', kind: 'upgrade', name: 'Bounty',
+    cost: 2, maxLevel: 3, req: [{ id: 'discount', lvl: 1 }], x: 512, y: 428,
     desc: '+1 currency for every pixel destroyed.',
   },
   {
-    id: 'streakdmg', tree: 'upgrades', kind: 'upgrade', name: 'Kinetic Edge',
-    cost: 2, maxLevel: 2, req: [{ id: 'core', lvl: 1 }], x: 92, y: 92,
-    desc: 'Bounce streaks hit for +1 extra damage per level.',
+    id: 'harvest', tree: 'field', kind: 'upgrade', name: 'Kinetic Harvest',
+    cost: 2, maxLevel: 2, req: [{ id: 'momentum', lvl: 1 }], x: 752, y: 260,
+    desc: 'Every ball earns +1 currency every 24 bounces (-12 per level).',
   },
   {
-    id: 'harvest', tree: 'upgrades', kind: 'upgrade', name: 'Kinetic Harvest',
-    cost: 2, maxLevel: 2, req: [{ id: 'core', lvl: 1 }], x: 92, y: 428,
-    desc: 'Every ball earns +1 currency every 24 bounces (12 at level 2).',
+    id: 'resonance', tree: 'field', kind: 'upgrade', name: 'Resonance Field',
+    cost: 2, maxLevel: 2, req: [{ id: 'volley', lvl: 1 }], x: 752, y: 92,
+    desc: 'Balls without a pulse release a shockwave every 12 bounces (-4 per level).',
   },
   {
-    id: 'elastic', tree: 'upgrades', kind: 'upgrade', name: 'Elastic Field',
-    cost: 2, maxLevel: 2, req: [{ id: 'velocity', lvl: 1 }], x: 980, y: 92,
-    desc: 'Every ball gains +4% speed per bounce, up to +18% per level.',
-  },
-  {
-    id: 'resonance', tree: 'upgrades', kind: 'upgrade', name: 'Resonance Field',
-    cost: 2, maxLevel: 2, req: [{ id: 'radius', lvl: 1 }], x: 980, y: 260,
-    desc: 'Balls without a pulse of their own release a shockwave every 12 bounces (-4 per level).',
-  },
-  {
-    id: 'mitosis', tree: 'upgrades', kind: 'upgrade', name: 'Mitosis',
-    cost: 3, maxLevel: 2, req: [{ id: 'resonance', lvl: 1 }], x: 980, y: 428,
+    id: 'mitosis', tree: 'field', kind: 'upgrade', name: 'Mitosis',
+    cost: 3, maxLevel: 2, req: [{ id: 'resonance', lvl: 1 }], x: 980, y: 92,
     desc: 'Balls without a spawner shed a spark every 16 bounces (-5 per level).',
   },
+
+  // ----------------------------------------------------------------- Arc
+  {
+    id: 'arc', tree: 'arc', kind: 'ball', ball: 'arc', name: 'Arc',
+    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
+    desc: 'Balanced chain round. Click to equip.',
+  },
+  {
+    id: 'arc_dmg', tree: 'arc', kind: 'upgrade', name: 'Overcharge',
+    cost: 1, maxLevel: 3, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 92,
+    desc: '+1 damage per level.',
+  },
+  {
+    id: 'arc_spd', tree: 'arc', kind: 'upgrade', name: 'Ion Drive',
+    cost: 1, maxLevel: 2, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 260,
+    desc: '+12% launch and bounce speed per level.',
+  },
+  {
+    id: 'arc_streak', tree: 'arc', kind: 'upgrade', name: 'Momentum',
+    cost: 1, maxLevel: 2, req: [{ id: 'arc', lvl: 1 }], x: 292, y: 428,
+    desc: 'Streak damage arrives 3 bounces sooner per level.',
+  },
+  {
+    id: 'arc_pulse', tree: 'arc', kind: 'upgrade', name: 'Resonance',
+    cost: 2, maxLevel: 2, req: [{ id: 'arc_dmg', lvl: 1 }], x: 512, y: 92,
+    desc: 'Release a shockwave every 10 bounces (-2 per level).',
+  },
+  {
+    id: 'arc_pierce', tree: 'arc', kind: 'upgrade', name: 'Phase',
+    cost: 2, maxLevel: 2, req: [{ id: 'arc_spd', lvl: 1 }], x: 512, y: 260,
+    desc: '+1 pierce per level.',
+  },
+  {
+    id: 'arc_streakdmg', tree: 'arc', kind: 'upgrade', name: 'Kinetic Edge',
+    cost: 2, maxLevel: 2, req: [{ id: 'arc_streak', lvl: 1 }], x: 512, y: 428,
+    desc: '+1 damage from each bounce streak per level.',
+  },
+  {
+    id: 'arc_chain', tree: 'arc', kind: 'upgrade', name: 'Chain Reaction',
+    cost: 2, maxLevel: 2, req: [{ id: 'arc_pulse', lvl: 1 }], x: 752, y: 92,
+    desc: 'Shed a bouncing spark every 14 bounces (-3 per level).',
+  },
+  {
+    id: 'arc_streakpierce', tree: 'arc', kind: 'upgrade', name: 'Momentum Pierce',
+    cost: 3, maxLevel: 1, req: [{ id: 'arc_streak', lvl: 2 }, { id: 'arc_pierce', lvl: 1 }], x: 752, y: 260,
+    desc: 'Synergy: every streak also grants +1 pierce.',
+  },
+  {
+    id: 'arc_conductor', tree: 'arc', kind: 'upgrade', name: 'Conductor',
+    cost: 3, maxLevel: 2, req: [{ id: 'arc_chain', lvl: 1 }, { id: 'arc_streakdmg', lvl: 1 }], x: 752, y: 428,
+    desc: 'Synergy: Chain sparks deal +1 damage per level.',
+  },
+  {
+    id: 'arc_overload', tree: 'arc', kind: 'upgrade', name: 'Overload',
+    cost: 3, maxLevel: 1, req: [{ id: 'arc_chain', lvl: 2 }, { id: 'arc_pulse', lvl: 2 }], x: 980, y: 92,
+    desc: 'Synergy: pulses gain +1 damage, +0.5 px radius and come 2 bounces sooner.',
+  },
+
+  // ---------------------------------------------------------------- Maul
+  {
+    id: 'maul', tree: 'maul', kind: 'ball', ball: 'maul', name: 'Maul',
+    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
+    desc: 'Heavy crush round. Click to equip.',
+  },
+  {
+    id: 'maul_dmg', tree: 'maul', kind: 'upgrade', name: 'Overcharge',
+    cost: 1, maxLevel: 3, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 92,
+    desc: '+1 damage per level.',
+  },
+  {
+    id: 'maul_splash', tree: 'maul', kind: 'upgrade', name: 'Crush',
+    cost: 1, maxLevel: 2, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 260,
+    desc: '+1 crush damage to the pixels around each impact per level.',
+  },
+  {
+    id: 'maul_spd', tree: 'maul', kind: 'upgrade', name: 'Siege Engine',
+    cost: 1, maxLevel: 2, req: [{ id: 'maul', lvl: 1 }], x: 292, y: 428,
+    desc: '+10% launch and bounce speed per level.',
+  },
+  {
+    id: 'maul_impact', tree: 'maul', kind: 'upgrade', name: 'Shockwave',
+    cost: 2, maxLevel: 2, req: [{ id: 'maul_dmg', lvl: 1 }], x: 512, y: 92,
+    desc: 'Every bounce releases a shockwave (0.9 px, +0.35 px per level).',
+  },
+  {
+    id: 'maul_ramp', tree: 'maul', kind: 'upgrade', name: 'Ramp',
+    cost: 2, maxLevel: 2, req: [{ id: 'maul_splash', lvl: 1 }], x: 512, y: 260,
+    desc: 'Steel ricochets add +1 damage and +6% size per level.',
+  },
+  {
+    id: 'maul_fracture', tree: 'maul', kind: 'upgrade', name: 'Fracture',
+    cost: 2, maxLevel: 1, req: [{ id: 'maul_splash', lvl: 2 }], x: 512, y: 428,
+    desc: 'The crush also hits diagonals.',
+  },
+  {
+    id: 'maul_blast', tree: 'maul', kind: 'upgrade', name: 'Blast Charge',
+    cost: 2, maxLevel: 2, req: [{ id: 'maul_impact', lvl: 1 }], x: 752, y: 92,
+    desc: 'Detonate once on the first impact (2.5 px +1 per level).',
+  },
+  {
+    id: 'maul_seismic', tree: 'maul', kind: 'upgrade', name: 'Seismic Crush',
+    cost: 3, maxLevel: 1, req: [{ id: 'maul_impact', lvl: 1 }, { id: 'maul_fracture', lvl: 1 }], x: 752, y: 260,
+    desc: 'Synergy: every crush also releases a small shockwave.',
+  },
+  {
+    id: 'maul_aftershock', tree: 'maul', kind: 'upgrade', name: 'Aftershock',
+    cost: 3, maxLevel: 1, req: [{ id: 'maul_ramp', lvl: 1 }, { id: 'maul_splash', lvl: 2 }], x: 752, y: 428,
+    desc: 'Synergy: each bounce adds +1 crush damage, up to +4.',
+  },
+  {
+    id: 'maul_quake', tree: 'maul', kind: 'upgrade', name: 'Quake',
+    cost: 3, maxLevel: 1, req: [{ id: 'maul_blast', lvl: 2 }, { id: 'maul_seismic', lvl: 1 }], x: 980, y: 260,
+    desc: 'Synergy: release a 2.2 px shockwave every 6 bounces.',
+  },
+
+  // --------------------------------------------------------------- Drift
+  {
+    id: 'drift', tree: 'drift', kind: 'ball', ball: 'drift', name: 'Drift',
+    cost: 0, maxLevel: 1, req: [], x: 92, y: 260,
+    desc: 'Fast pierce round. Click to equip.',
+  },
+  {
+    id: 'drift_dmg', tree: 'drift', kind: 'upgrade', name: 'Overcharge',
+    cost: 1, maxLevel: 3, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 92,
+    desc: '+1 damage per level.',
+  },
+  {
+    id: 'drift_spd', tree: 'drift', kind: 'upgrade', name: 'Ion Drive',
+    cost: 1, maxLevel: 3, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 260,
+    desc: '+12% launch and bounce speed per level.',
+  },
+  {
+    id: 'drift_pierce', tree: 'drift', kind: 'upgrade', name: 'Focus',
+    cost: 1, maxLevel: 2, req: [{ id: 'drift', lvl: 1 }], x: 292, y: 428,
+    desc: '+1 pierce and +1 pierce cap per level.',
+  },
+  {
+    id: 'drift_needle', tree: 'drift', kind: 'upgrade', name: 'Needle',
+    cost: 2, maxLevel: 1, req: [{ id: 'drift_pierce', lvl: 1 }], x: 512, y: 92,
+    desc: 'Pierce grows on every bounce instead of every second bounce.',
+  },
+  {
+    id: 'drift_charge', tree: 'drift', kind: 'upgrade', name: 'Elasticity',
+    cost: 2, maxLevel: 2, req: [{ id: 'drift_spd', lvl: 1 }], x: 512, y: 260,
+    desc: '+4% speed per bounce and a higher speed cap per level.',
+  },
+  {
+    id: 'drift_kick', tree: 'drift', kind: 'upgrade', name: 'Kick',
+    cost: 2, maxLevel: 2, req: [{ id: 'drift_pierce', lvl: 1 }], x: 512, y: 428,
+    desc: 'Steel ricochets add +3% speed per level.',
+  },
+  {
+    id: 'drift_pulse', tree: 'drift', kind: 'upgrade', name: 'Resonance',
+    cost: 2, maxLevel: 2, req: [{ id: 'drift_needle', lvl: 1 }], x: 752, y: 92,
+    desc: 'Release a shockwave every 8 bounces (-2 per level).',
+  },
+  {
+    id: 'drift_spawn', tree: 'drift', kind: 'upgrade', name: 'Budding',
+    cost: 2, maxLevel: 2, req: [{ id: 'drift_charge', lvl: 1 }], x: 752, y: 260,
+    desc: 'Shed a bouncing spark every 12 bounces (-2 per level).',
+  },
+  {
+    id: 'drift_phase', tree: 'drift', kind: 'upgrade', name: 'Phase Drive',
+    cost: 3, maxLevel: 1, req: [{ id: 'drift_kick', lvl: 1 }, { id: 'drift_charge', lvl: 1 }], x: 752, y: 428,
+    desc: 'Synergy: every pierce hit adds +2% speed.',
+  },
+  {
+    id: 'drift_pulsespawn', tree: 'drift', kind: 'upgrade', name: 'Chain Pulse',
+    cost: 3, maxLevel: 1, req: [{ id: 'drift_pulse', lvl: 1 }, { id: 'drift_spawn', lvl: 1 }], x: 980, y: 92,
+    desc: 'Synergy: pulses also shed a spark.',
+  },
+  {
+    id: 'drift_overwind', tree: 'drift', kind: 'upgrade', name: 'Overwind',
+    cost: 3, maxLevel: 1, req: [{ id: 'drift_charge', lvl: 2 }], x: 980, y: 260,
+    desc: 'Synergy: +40% speed cap.',
+  },
 ];
-
-const BALL_EXTRA = {
-  spark: { stat: 'chain', name: 'Chain', cost: 2, maxLevel: 2, desc: 'Spark sheds a spark every 14 bounces (-3 per level).' },
-  rubber: { stat: 'overwind', name: 'Overwind', cost: 2, maxLevel: 2, desc: '+40% speed cap per level.' },
-  slug: { stat: 'fracture', name: 'Fracture', cost: 2, maxLevel: 2, desc: 'The crush also hits diagonals; level 2 adds +1 crush damage.' },
-  bouncer: { stat: 'kick', name: 'Kick', cost: 2, maxLevel: 2, desc: 'Steel ricochets also add +3% speed per level (up to +60%).' },
-  bumper: { stat: 'amplify', name: 'Amplify', cost: 2, maxLevel: 2, desc: '+0.6 px shockwave radius and +1 damage at level 2.' },
-  ricochet: { stat: 'needle', name: 'Needle', cost: 2, maxLevel: 2, desc: 'Pierce grows on every bounce instead of every second.' },
-  echo: { stat: 'feedback', name: 'Feedback', cost: 2, maxLevel: 2, desc: '+1 pulse damage and one bounce sooner per level.' },
-  spore: { stat: 'budding', name: 'Budding', cost: 2, maxLevel: 2, desc: 'Bursts come 2 bounces sooner per level.' },
-  nova: { stat: 'pulsefrags', name: 'Chain Nova', cost: 2, maxLevel: 2, desc: 'Pulses also shed 1 spark per level.' },
-};
-
-/**
- * Signature upgrade for each ball. Every ball also gets Damage / Speed /
- * Size nodes; these four chips are the per-ball track of the tech tree.
- */
-const BALL_SIG = {
-  spark: { stat: 'streak', step: 4, name: 'Streak', cost: 1, maxLevel: 2, desc: 'Spark\'s bounce-streak bonus arrives 4 bounces sooner per level.' },
-  rubber: { stat: 'charge', step: 0.03, name: 'Elasticity', cost: 2, maxLevel: 2, desc: '+3% more speed per bounce and a higher speed cap per level.' },
-  slug: { stat: 'splash', step: 1, name: 'Crush', cost: 2, maxLevel: 2, desc: '+1 damage to the pixels around each impact per level.' },
-  bouncer: { stat: 'ramp', step: 1, name: 'Ramp', cost: 2, maxLevel: 2, desc: 'Bouncer gains +1 more damage per steel ricochet.' },
-  bumper: { stat: 'impact', step: 0.5, name: 'Shockwave', cost: 2, maxLevel: 2, desc: '+0.5 px shockwave radius per level; level 2 hits for 2.' },
-  ricochet: { stat: 'pierce', step: 2, name: 'Focus', cost: 2, maxLevel: 2, desc: '+2 pierce cap per level.' },
-  echo: { stat: 'pulse', step: 0.7, name: 'Resonance', cost: 2, maxLevel: 2, desc: '+0.7 px shockwave radius per level.' },
-  spore: { stat: 'frags', step: 1, name: 'Bloom', cost: 2, maxLevel: 2, desc: '+1 spark per burst per level.' },
-  nova: { stat: 'pulse', step: 1.5, name: 'Supernova', cost: 2, maxLevel: 2, desc: '+1.5 px pulse radius per level.' },
-};
-
-for (const def of BALL_TYPES) {
-  const sig = BALL_SIG[def.id];
-  const extra = BALL_EXTRA[def.id];
-  const upgrades = [
-    { stat: 'dmg', name: 'Damage', cost: 1, maxLevel: 2, desc: `+1 damage for ${def.name}.` },
-    { stat: 'spd', name: 'Speed', cost: 1, maxLevel: 2, desc: `+20% speed for ${def.name}.` },
-    { stat: 'size', name: 'Size', cost: 1, maxLevel: 2, desc: `+12% radius for ${def.name}.` },
-    { stat: 'reload', name: 'Reload', cost: 1, maxLevel: 2, desc: `${def.name} reloads 15% faster per level.` },
-    { stat: sig.stat, name: sig.name, cost: sig.cost, maxLevel: sig.maxLevel, desc: sig.desc, sig: true },
-    { stat: extra.stat, name: extra.name, cost: extra.cost, maxLevel: extra.maxLevel, desc: extra.desc, sig: true },
-  ];
-  for (const u of upgrades) {
-    TECH_NODES.push({
-      id: `${def.id}_${u.stat}`,
-      tree: 'balls',
-      kind: 'ballup',
-      ball: def.id,
-      stat: u.stat,
-      sig: !!u.sig,
-      name: u.name,
-      label: u.name,
-      cost: u.cost,
-      maxLevel: u.maxLevel,
-      req: [{ id: def.id, lvl: 1 }],
-      x: 0, y: 0,
-      desc: u.desc,
-    });
-  }
-}
 
 const TECH_BY_ID = {};
 for (const n of TECH_NODES) TECH_BY_ID[n.id] = n;
@@ -319,4 +347,9 @@ for (const n of TECH_NODES) TECH_BY_ID[n.id] = n;
 function techNodeCost(node, level) {
   if (node.cost === 0) return 0;
   return Math.max(1, Math.round(node.cost * Math.pow(1.5, level)));
+}
+
+function ballPrice(baseCost, costMult, demand) {
+  const heat = Math.min(PRICING.cap, Math.max(0, demand || 0));
+  return Math.max(1, Math.round(baseCost * costMult * (1 + heat * PRICING.perUnit)));
 }

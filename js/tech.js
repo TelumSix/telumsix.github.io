@@ -3,8 +3,9 @@
 class Tech {
   constructor(levels) {
     this.levels = Object.assign({}, levels || {});
-    if (!(this.levels.spark > 0)) this.levels.spark = 1;
-    if (!(this.levels.core > 0)) this.levels.core = 1;
+    for (const id of ['core', 'arc', 'maul', 'drift']) {
+      if (!(this.levels[id] > 0)) this.levels[id] = 1;
+    }
     for (const node of TECH_NODES) {
       if (this.levels[node.id] == null) continue;
       this.levels[node.id] = clamp(this.levels[node.id] | 0, 0, node.maxLevel);
@@ -36,7 +37,7 @@ class Tech {
   }
 
   unlockedBalls() {
-    return BALL_TYPES.filter(b => b.id === 'spark' || this.level(b.id) >= 1);
+    return BALL_TYPES.slice();
   }
 
   getEffects() {
@@ -45,18 +46,12 @@ class Tech {
       damageBonus: L('damage'),
       yieldMult: 1 + 0.25 * L('yield'),
       volley: 1 + L('volley'),
-      cooldownMult: Math.pow(0.7, L('rapid')),
       costMult: Math.pow(0.88, L('discount')),
-      radiusMult: 1 + 0.15 * L('radius'),
-      speedMult: 1 + 0.15 * L('velocity'),
+      bounty: L('bounty'),
       streakBonus: 2 * L('momentum'),
-      streakDmg: L('streakdmg'),
-      elastic: 0.04 * L('elastic'),
-      elasticCap: 0.18 * L('elastic'),
+      harvestEvery: L('harvest') > 0 ? 36 - 12 * L('harvest') : 0,
       resonanceEvery: L('resonance') > 0 ? 16 - 4 * L('resonance') : 0,
       mitosisEvery: L('mitosis') > 0 ? 21 - 5 * L('mitosis') : 0,
-      harvestEvery: L('harvest') > 0 ? 36 - 12 * L('harvest') : 0,
-      bounty: L('bounty'),
     };
   }
 }
@@ -76,8 +71,7 @@ class TechUI {
     this.ctx = this.canvas.getContext('2d');
     this.info = document.getElementById('treeInfo');
     this.treeWrap = document.getElementById('treeWrap');
-    this.ballListEl = document.getElementById('ballUpgrades');
-    this.tree = 'arsenal';
+    this.tree = 'arc';
     this.hover = null;
     this.scaleX = 1;
     this.scaleY = 1;
@@ -111,10 +105,8 @@ class TechUI {
         this.tree = tab.dataset.tree;
         this.hover = null;
         this.updateTabs();
-        if (this.tree !== 'balls') {
-          this.resize();
-          this.draw();
-        }
+        this.resize();
+        this.draw();
         this.setInfo(null);
         this.game.sfx.click();
       });
@@ -129,7 +121,7 @@ class TechUI {
     // the backing store in sync instead of drawing at a stale scale.
     if (typeof ResizeObserver !== 'undefined') {
       this._ro = new ResizeObserver(() => {
-        if (!this.isOpen || this.tree === 'balls') return;
+        if (!this.isOpen) return;
         this.resize();
         this.draw();
       });
@@ -141,19 +133,14 @@ class TechUI {
     document.querySelectorAll('.tab').forEach(t => {
       t.classList.toggle('active', t.dataset.tree === this.tree);
     });
-    const isBalls = this.tree === 'balls';
-    if (this.treeWrap) this.treeWrap.classList.toggle('hidden', isBalls);
-    if (this.ballListEl) this.ballListEl.classList.toggle('hidden', !isBalls);
-    if (isBalls) this.buildBallUpgrades();
+    if (this.treeWrap) this.treeWrap.classList.remove('hidden');
   }
 
   open() {
     this.overlay.classList.remove('hidden');
     this.updateTabs();
-    if (this.tree !== 'balls') {
-      this.resize();
-      this.draw();
-    }
+    this.resize();
+    this.draw();
     this.setInfo(null);
     this.game.sfx.click();
   }
@@ -205,7 +192,7 @@ class TechUI {
 
   clickNode(node) {
     const game = this.game;
-    if (node.kind === 'ball' && game.tech.level(node.id) >= 1) {
+    if (node.kind === 'ball') {
       game.selectBall(node.ball);
       this.close();
       return;
@@ -214,95 +201,18 @@ class TechUI {
       game.toast('The field core is always active.', 'gold');
       return;
     }
-    if (node.kind === 'ballup') {
-      game.buyNode(node);
-      this.refresh();
-      this.setInfo(node);
-      return;
-    }
     game.buyNode(node);
     this.draw();
     this.setInfo(node);
   }
 
   refresh() {
-    if (this.tree === 'balls') this.buildBallUpgrades();
-    else this.draw();
-  }
-
-  buildBallUpgrades() {
-    const el = this.ballListEl;
-    if (!el) return;
-    const scrollTop = el.scrollTop;
-    const game = this.game;
-    const tech = game.tech;
-    const frag = document.createDocumentFragment();
-
-    for (const def of BALL_TYPES) {
-      const unlocked = tech.level(def.id) >= 1;
-      const row = document.createElement('div');
-      row.className = 'bu-row' + (unlocked ? '' : ' locked');
-
-      const main = document.createElement('button');
-      main.type = 'button';
-      main.className = 'bu-main';
-      main.innerHTML =
-        `<span class="bc-dot" style="--c:${def.color}"></span>` +
-        `<span class="bu-text"><span class="bu-name">${def.name}</span>` +
-        `<span class="bu-stats">${unlocked ? game.ballPreview(def) : 'Locked — unlock in Arsenal'}</span></span>`;
-      main.addEventListener('click', () => {
-        if (!unlocked) {
-          game.toast('Unlock this ball in the Arsenal tab first.', 'bad');
-          game.sfx.error();
-          return;
-        }
-        game.selectBall(def.id);
-        game.toast(`${def.name} equipped.`, 'gold');
-      });
-      row.appendChild(main);
-
-      const chips = document.createElement('div');
-      chips.className = 'bu-chips';
-      for (const node of TECH_NODES) {
-        if (node.tree !== 'balls' || node.ball !== def.id) continue;
-        const lvl = tech.level(node.id);
-        const maxed = tech.maxed(node);
-        const cost = tech.nodeCost(node);
-        const can = unlocked && tech.canBuy(node, game.skill);
-
-        let pips = '';
-        for (let i = 0; i < node.maxLevel; i++) pips += `<i class="${i < lvl ? 'on' : ''}"></i>`;
-
-        const chip = document.createElement('button');
-        chip.type = 'button';
-        chip.className = 'bu-chip' + (maxed ? ' maxed' : can ? ' can' : '');
-        if (!unlocked) chip.disabled = true;
-        chip.innerHTML =
-          `<span class="bu-chip-name">${node.label}</span>` +
-          `<span class="bu-pips">${pips}</span>` +
-          `<span class="bu-chip-cost">${maxed ? 'MAX' : '\u2726 ' + cost}</span>`;
-        chip.addEventListener('pointerenter', () => this.setInfo(node));
-        chip.addEventListener('click', () => {
-          if (!unlocked) return;
-          game.buyNode(node);
-          this.setInfo(node);
-        });
-        chips.appendChild(chip);
-      }
-      row.appendChild(chips);
-      frag.appendChild(row);
-    }
-
-    el.innerHTML = '';
-    el.appendChild(frag);
-    el.scrollTop = scrollTop;
+    this.draw();
   }
 
   setInfo(node) {
     if (!node) {
-      const hint = this.tree === 'balls'
-        ? 'Click a chip to buy a per-ball upgrade · click the ball to equip it · unlock balls in the Arsenal tab.'
-        : 'Hover a node to inspect it · click to purchase · click an owned ball to equip it.';
+      const hint = 'Hover a node to inspect it · click to purchase · click a ball\'s root node to equip it.';
       this.info.innerHTML = `<div class="ti-head"><span class="muted">${hint}</span></div><div class="ti-desc"></div>`;
       return;
     }
@@ -318,7 +228,13 @@ class TechUI {
     }).join(' · ');
 
     let status;
-    if (maxed) status = node.kind === 'ball' ? '<span class="req-ok">Owned — click to equip</span>' : '<span class="req-ok">Max level</span>';
+    if (node.kind === 'core') status = '<span class="req-ok">Active</span>';
+    else if (node.kind === 'ball') {
+      status = game.selected === node.ball
+        ? '<span class="req-ok">Equipped</span>'
+        : '<span class="req-ok">Unlocked — click to equip</span>';
+    }
+    else if (maxed) status = '<span class="req-ok">Max level</span>';
     else if (!tech.reqsMet(node)) status = `<span class="req-no">Locked</span>${reqs ? ' — needs ' + reqs : ''}`;
     else if (game.skill < cost) status = `<span class="req-no">Need ${cost - game.skill} more \u2726</span>`;
     else status = `<span class="cost">\u2726 ${cost}</span> — ready to buy`;
@@ -331,7 +247,6 @@ class TechUI {
   }
 
   draw() {
-    if (this.tree === 'balls') return;
     const ctx = this.ctx;
     const cw = this.canvas.width;
     const ch = this.canvas.height;
@@ -471,8 +386,8 @@ class TechUI {
     // subtitle
     let subText;
     if (node.kind === 'core') subText = 'Active';
-    else if (node.kind === 'ball' && node.id === 'spark') subText = 'Starting round';
-    else if (maxed) subText = node.kind === 'ball' ? 'Owned' : 'Max level';
+    else if (node.kind === 'ball') subText = game.selected === node.id ? 'Equipped' : 'Click to equip';
+    else if (maxed) subText = 'Max level';
     else subText = '\u2726 ' + cost;
     ctx.font = '500 11px ui-sans-serif, system-ui, "Segoe UI", sans-serif';
     ctx.fillStyle = sub;

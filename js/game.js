@@ -13,7 +13,7 @@ class Game {
     this.effects = this.tech.getEffects();
 
     const unlocked = this.tech.unlockedBalls().map(b => b.id);
-    this.selected = unlocked.indexOf(this.saveData.selected) >= 0 ? this.saveData.selected : 'spark';
+    this.selected = unlocked.indexOf(this.saveData.selected) >= 0 ? this.saveData.selected : 'arc';
     if (this.currency === 0 && !this.saveData.field && !this.saveData.seed) this.currency = 60;
 
     this.world.onDestroy = (cx, cy, maxH) => this.onPixelDestroyed(cx, cy, maxH);
@@ -32,7 +32,7 @@ class Game {
     this.pan = null;
     this.keys = new Set();
     this.cooldowns = Object.create(null);
-    this.launches = Object.assign({}, this.saveData.launches || {});
+    this.demand = this.restoreDemand(this.saveData.demand, this.saveData.demandAt);
     this.last = 0;
     this.time = 0;
     this.won = false;
@@ -137,6 +137,7 @@ class Game {
 
   update(dt) {
     this.time += dt;
+    this.coolDemand(dt);
     const cam = this.cam;
     const keys = this.keys;
 
@@ -252,16 +253,40 @@ class Game {
   /* ------------------------------------------------------------- shooting */
 
   ballCost(def) {
-    // Every launch of a given ball makes the next one 1.5x pricier, so a swarm
-    // keeps paying for itself instead of snowballing for free.
-    const fired = this.launches[def.id] || 0;
-    const raw = def.cost * this.effects.costMult * Math.pow(1.5, fired);
-    return Math.max(1, Math.round(Math.min(raw, 1e18)));
+    // Recent launches raise a demand surcharge; resting lets it cool off.
+    return ballPrice(def.cost, this.effects.costMult, this.demand[def.id] || 0);
+  }
+
+  restoreDemand(saved, savedAt) {
+    const demand = Object.create(null);
+    if (!saved || typeof saved !== 'object') return demand;
+    const idle = Math.max(0, (Date.now() - (Number(savedAt) || Date.now())) / 1000);
+    const cooled = PRICING.coolPerSec * Math.min(idle, 3600);
+    for (const id in saved) {
+      const v = Number(saved[id]);
+      if (!isFinite(v)) continue;
+      const left = Math.min(PRICING.cap, Math.max(0, v)) - cooled;
+      if (left > 0.001) demand[id] = left;
+    }
+    return demand;
+  }
+
+  coolDemand(dt) {
+    const cool = PRICING.coolPerSec * dt;
+    for (const id in this.demand) {
+      const left = this.demand[id] - cool;
+      if (left > 0.001) this.demand[id] = left;
+      else delete this.demand[id];
+    }
+  }
+
+  canLaunchFrom(wx, wy) {
+    const [cx, cy] = this.world.cellAt(wx, wy);
+    return this.world.isCleared(cx, cy);
   }
 
   ballCooldown(def) {
-    const reload = 1 - 0.15 * this.tech.level(def.id + '_reload');
-    return Math.max(0.06, (def.cooldown || 0.3) * this.effects.cooldownMult * reload);
+    return Math.max(0.06, def.cooldown || 0.3);
   }
 
   cooldownLeft(def, now) {
@@ -269,19 +294,17 @@ class Game {
     return Math.max(0, ready - (now === undefined ? performance.now() / 1000 : now));
   }
 
-  /** Final stats for a ball after global and per-ball tech. */
+  /** Final stats for a ball after shared field tech and its own tree. */
   ballStats(def) {
     const tech = this.tech;
     const eff = this.effects;
     const P = CFG.PIXEL;
     const lv = k => tech.level(def.id + '_' + k);
-    const sig = BALL_SIG[def.id];
-    const sigLv = tech.level(def.id + '_' + sig.stat);
 
     const s = {
       damage: def.damage + eff.damageBonus + lv('dmg'),
-      speed: def.speed * eff.speedMult * (1 + 0.20 * lv('spd')),
-      radius: def.radius * eff.radiusMult * (1 + 0.12 * lv('size')),
+      speed: def.speed * (1 + 0.12 * lv('spd')),
+      radius: def.radius,
       pierce: def.pierce || 0,
       explode: (def.explode || 0) * P,
       explodeDmg: def.explodeDmg || 0,
@@ -290,84 +313,101 @@ class Game {
       rampSize: def.rampSize || 0,
       charge: def.charge || 0,
       chargeCap: def.chargeCap || 1,
-      streakEvery: Math.max(4, (def.streakEvery || 16) - eff.streakBonus),
+      streakEvery: Math.max(4, (def.streakEvery || 12) - eff.streakBonus - 3 * lv('streak')),
       splash: def.splash || 0,
-      impactR: def.impact ? def.impact.r * P : 0,
-      impactDmg: def.impact ? def.impact.dmg : 1,
-      pulseEvery: def.pulse ? def.pulse.every : 0,
-      pulseR: def.pulse ? def.pulse.r * P : 0,
-      pulseDmg: def.pulse ? def.pulse.dmg : 0,
-      spawnEvery: def.spawn ? def.spawn.every : 0,
-      spawnCount: def.spawn ? def.spawn.count : 0,
+      splashCap: def.splash || 0,
+      impactR: 0,
+      impactDmg: 1,
+      pulseEvery: 0,
+      pulseR: 0,
+      pulseDmg: 0,
+      spawnEvery: 0,
+      spawnCount: 0,
       pierceEvery: def.pierceGrow ? def.pierceGrow.every : 0,
       pierceCap: def.pierceGrow ? def.pierceGrow.cap : 0,
-      streakDamage: 1 + eff.streakDmg,
+      streakDamage: 1 + lv('streakdmg'),
       splashDiag: false,
       chargeOnSteel: 0,
       pulseSpawn: 0,
       harvestEvery: eff.harvestEvery,
-      reloadMult: 1 - 0.15 * lv('reload'),
+      fragBonus: 0,
+      streakPierce: 0,
+      splashGrow: 0,
+      crushBlast: 0,
+      crushBlastDmg: 1,
+      pierceCharge: 0,
     };
 
-    if (sig.stat === 'streak') {
-      s.streakEvery = Math.max(4, s.streakEvery - sig.step * sigLv);
-    } else if (sig.stat === 'charge') {
-      s.charge += sig.step * sigLv;
-      s.chargeCap += 0.2 * sigLv;
-    } else if (sig.stat === 'splash') {
-      s.splash += sigLv;
-    } else if (sig.stat === 'ramp') {
-      s.ramp += sig.step * sigLv;
-      s.rampSize += 0.06 * sigLv;
-    } else if (sig.stat === 'impact') {
-      if (sigLv > 0) {
-        s.impactR = (0.9 + 0.5 * sigLv) * P;
-        s.impactDmg = 1 + (sigLv > 1 ? 1 : 0);
+    if (def.id === 'arc') {
+      if (lv('pulse') > 0) {
+        s.pulseEvery = Math.max(4, 10 - 2 * lv('pulse'));
+        s.pulseR = (1.2 + 0.25 * lv('pulse')) * P;
+        s.pulseDmg = 1 + (lv('pulse') > 1 ? 1 : 0);
       }
-    } else if (sig.stat === 'pierce') {
-      s.pierceCap += sig.step * sigLv;
-    } else if (sig.stat === 'pulse') {
-      s.pulseR += sig.step * sigLv * P;
-    } else if (sig.stat === 'frags') {
-      s.spawnCount += sig.step * sigLv;
-    }
-
-    // Shared "elastic field" winds every ball up a little on each bounce.
-    if (eff.elastic > 0) {
-      s.charge += eff.elastic;
-      s.chargeCap += eff.elasticCap;
-    }
-
-    const extra = BALL_EXTRA[def.id];
-    const exLv = tech.level(def.id + '_' + extra.stat);
-    if (exLv > 0) {
-      if (extra.stat === 'chain') {
-        s.spawnEvery = Math.max(4, 14 - 3 * exLv);
-        s.spawnCount = Math.max(1, s.spawnCount);
-      } else if (extra.stat === 'overwind') {
-        s.chargeCap += 0.4 * exLv;
-      } else if (extra.stat === 'fracture') {
-        s.splashDiag = true;
-        s.splash += exLv > 1 ? 1 : 0;
-      } else if (extra.stat === 'kick') {
-        s.chargeOnSteel = 0.03 * exLv;
-        s.chargeCap = Math.max(s.chargeCap, 1.6);
-      } else if (extra.stat === 'amplify') {
-        s.impactR += 0.6 * exLv * P;
-        s.impactDmg += exLv > 1 ? 1 : 0;
-      } else if (extra.stat === 'needle') {
-        s.pierceEvery = 1;
-      } else if (extra.stat === 'feedback') {
-        s.pulseDmg += exLv;
-        s.pulseEvery = Math.max(2, s.pulseEvery - exLv);
-      } else if (extra.stat === 'budding') {
-        s.spawnEvery = Math.max(3, s.spawnEvery - 2 * exLv);
-      } else if (extra.stat === 'pulsefrags') {
-        s.pulseSpawn = exLv;
+      if (lv('pierce') > 0) {
+        s.pierce += lv('pierce');
+        s.pierceCap = Math.max(s.pierceCap, s.pierce + 3);
       }
+      if (lv('chain') > 0) {
+        s.spawnEvery = Math.max(4, 14 - 3 * lv('chain'));
+        s.spawnCount = 1;
+      }
+      s.streakPierce = lv('streakpierce') > 0 ? 1 : 0;
+      s.fragBonus = lv('conductor');
+      if (lv('overload') > 0) {
+        s.pulseDmg += 1;
+        s.pulseR += 0.5 * P;
+        s.pulseEvery = Math.max(3, s.pulseEvery - 2);
+      }
+    } else if (def.id === 'maul') {
+      if (lv('impact') > 0) {
+        s.impactR = (0.9 + 0.35 * lv('impact')) * P;
+        s.impactDmg = 1 + (lv('impact') > 1 ? 1 : 0);
+      }
+      s.ramp = lv('ramp');
+      s.rampSize = 0.06 * lv('ramp');
+      s.splashDiag = lv('fracture') > 0;
+      if (lv('fracture') > 1) s.splash += 1;
+      if (lv('blast') > 0) {
+        s.explode = (2.5 + lv('blast')) * P;
+        s.explodeDmg = 1 + lv('blast');
+      }
+      if (lv('seismic') > 0) {
+        s.crushBlast = 1.2 * P;
+        s.crushBlastDmg = 1;
+      }
+      if (lv('aftershock') > 0) s.splashGrow = 1;
+      s.splashCap = s.splash + (lv('aftershock') > 0 ? 4 : 0);
+      if (lv('quake') > 0) {
+        s.pulseEvery = 6;
+        s.pulseR = 2.2 * P;
+        s.pulseDmg = 2;
+      }
+    } else if (def.id === 'drift') {
+      s.pierce += lv('pierce');
+      s.pierceCap += lv('pierce');
+      if (lv('needle') > 0) s.pierceEvery = 1;
+      if (lv('charge') > 0) {
+        s.charge = 0.04 * lv('charge');
+        s.chargeCap = 1.5 + 0.2 * lv('charge');
+      }
+      s.chargeOnSteel = 0.03 * lv('kick');
+      if (lv('kick') > 0) s.chargeCap = Math.max(s.chargeCap, 1.5);
+      if (lv('pulse') > 0) {
+        s.pulseEvery = Math.max(4, 8 - 2 * lv('pulse'));
+        s.pulseR = 1.1 * P;
+        s.pulseDmg = 1;
+      }
+      if (lv('spawn') > 0) {
+        s.spawnEvery = Math.max(4, 12 - 2 * lv('spawn'));
+        s.spawnCount = 1;
+      }
+      s.pulseSpawn = lv('pulsespawn');
+      if (lv('overwind') > 0) s.chargeCap += 0.4;
+      s.pierceCharge = 0.02 * lv('phase');
     }
 
-    // Shared field powers: only balls without their own pulse/spawner get them.
+    // Shared field powers only fill gaps the ball's own tree left open.
     if (s.pulseEvery === 0 && eff.resonanceEvery > 0) {
       s.pulseEvery = eff.resonanceEvery;
       s.pulseR = P * 1.1;
@@ -377,7 +417,6 @@ class Game {
       s.spawnEvery = eff.mitosisEvery;
       s.spawnCount = 1;
     }
-
     return s;
   }
 
@@ -385,15 +424,20 @@ class Game {
     const s = this.ballStats(def);
     const parts = [`${s.damage} dmg`, `${Math.round(s.speed)} spd`, `r${s.radius.toFixed(1)}`];
     if (s.pierce > 0) parts.push(`${s.pierce} pierce`);
+    if (s.pierceEvery > 0) parts.push('pierce grows');
+    if (s.pierceCharge > 0) parts.push('pierce \u2192 speed');
     if (s.charge > 0) parts.push(`+${Math.round(s.charge * 100)}%/bounce`);
     if (s.splash > 0) parts.push(`${s.splash} crush`);
+    if (s.splashGrow > 0) parts.push('growing crush');
+    if (s.crushBlast > 0) parts.push('seismic crush');
     if (s.impactR > 0) parts.push('shockwave');
     if (s.ramp > 0) parts.push('steel ramp');
     if (s.pulseEvery > 0) parts.push(`pulse / ${s.pulseEvery}`);
-    if (s.spawnEvery > 0) parts.push(`split / ${s.spawnEvery}`);
-    if (s.pierceEvery > 0) parts.push('pierce grows');
-    if (s.reloadMult < 1) parts.push(`${Math.round((1 - s.reloadMult) * 100)}% reload`);
-    return parts.join(' · ');
+    if (s.spawnEvery > 0) parts.push(`sparks / ${s.spawnEvery}`);
+    if (s.streakPierce > 0) parts.push('streak pierce');
+    if (s.fragBonus > 0) parts.push(`+${s.fragBonus} spark dmg`);
+    if (s.pulseSpawn > 0) parts.push('pulse sparks');
+    return parts.join(' \u00b7 ');
   }
 
   onImpactBlast(wx, wy, radius, color) {
@@ -422,6 +466,12 @@ class Game {
     const now = performance.now() / 1000;
     const def = BALL_BY_ID[this.selected];
 
+    if (!this.canLaunchFrom(aim.wx, aim.wy)) {
+      this.showHint('Balls can only launch from cleared ground', 1800);
+      this.sfx.error();
+      return;
+    }
+
     if (now < (this.cooldowns[def.id] || 0)) {
       this.sfx.error();
       return;
@@ -443,11 +493,10 @@ class Game {
 
     this.currency -= cost;
     this.cooldowns[def.id] = now + this.ballCooldown(def);
-    this.launches[def.id] = (this.launches[def.id] || 0) + 1;
+    this.demand[def.id] = Math.min(PRICING.cap, (this.demand[def.id] || 0) + PRICING.gain);
     this.stats.shots++;
 
     const angle = Math.atan2(dy, dx);
-    const power = clamp(len / 260, 0.65, 1.2);
     const volley = this.effects.volley;
     const spread = 0.055;
     const ox = clamp(aim.wx, 1, CFG.WORLD - 1);
@@ -455,7 +504,7 @@ class Game {
 
     for (let i = 0; i < volley; i++) {
       const a = angle + (i - (volley - 1) * 0.5) * spread;
-      this.balls.fire(def, ox, oy, a, power);
+      this.balls.fire(def, ox, oy, a);
     }
 
     this.fx.ring(ox, oy, def.color, 46);
@@ -475,7 +524,6 @@ class Game {
     const dx = o.x - aim.cx;
     const dy = o.y - aim.cy;
     aim.len = Math.sqrt(dx * dx + dy * dy);
-    aim.power = clamp(aim.len / 260, 0.65, 1.2);
     if (aim.len > 3) {
       const ux = dx / aim.len;
       const uy = dy / aim.len;
@@ -517,11 +565,20 @@ class Game {
       if (this.pan) return;
       this.sfx.ensure();
       const w = this.cam.screenToWorld(p.x, p.y);
+      const wx = clamp(w.x, 0, CFG.WORLD);
+      const wy = clamp(w.y, 0, CFG.WORLD);
+      if (!this.canLaunchFrom(wx, wy)) {
+        const [cx, cy] = this.world.cellAt(wx, wy);
+        this.fx.ring((cx + 0.5) * CFG.PIXEL, (cy + 0.5) * CFG.PIXEL, '#f87171', CFG.PIXEL * 0.75);
+        this.showHint('Balls can only launch from cleared ground', 1800);
+        this.sfx.error();
+        e.preventDefault();
+        return;
+      }
       this.aim = {
         sx: p.x, sy: p.y, cx: p.x, cy: p.y,
-        wx: clamp(w.x, 0, CFG.WORLD),
-        wy: clamp(w.y, 0, CFG.WORLD),
-        power: 1, len: 0, hit: null,
+        wx, wy,
+        len: 0, hit: null,
       };
       try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
       this.updateAim();
@@ -612,7 +669,6 @@ class Game {
     aim.sx = o.x;
     aim.sy = o.y;
     aim.len = Math.sqrt((aim.cx - o.x) ** 2 + (aim.cy - o.y) ** 2);
-    aim.power = clamp(aim.len / 260, 0.65, 1.2);
   }
 
   onKeyDown(code, e) {
@@ -791,7 +847,7 @@ class Game {
     const rows = [
       ['fresh', pixelCss(1, 1)],
       ['hurt', pixelCss(6, 3)],
-      ['critical', pixelCss(10, 1)],
+      ['critical', pixelCss(CFG.MAX_HEALTH, 1)],
       ['steel', `rgb(${WALL_RGB[0]},${WALL_RGB[1]},${WALL_RGB[2]})`],
       ['shard \u2726', SHARD_CSS],
     ];
@@ -915,7 +971,7 @@ class Game {
         `<span class="bc-cost">\u25c6 ${this.ballCost(def)}</span>` +
         `<span class="bc-key">${i + 1}</span>` +
         `<span class="bc-cd"><i></i></span>`;
-      btn.title = `${def.desc}  ·  ${this.ballCooldown(def).toFixed(2)}s reload · each launch makes this ball 1.5x pricier`;
+      btn.title = `${def.desc}  ·  ${this.ballPreview(def)}  ·  ${this.ballCooldown(def).toFixed(2)}s reload · every launch adds a demand surcharge that cools while the ball rests`;
       btn._cdFill = btn.querySelector('.bc-cd > i');
       btn._costEl = btn.querySelector('.bc-cost');
       btn.addEventListener('click', () => this.selectBall(def.id));
@@ -977,6 +1033,7 @@ class Game {
     this.skill -= cost;
     this.tech.levels[node.id] = this.tech.level(node.id) + 1;
     this.effects = this.tech.getEffects();
+    this.balls.applyUpgrades();
 
     if (node.kind === 'ball') {
       this.selected = node.ball;
@@ -987,6 +1044,7 @@ class Game {
 
     this.sfx.buy();
     this.refreshHud();
+    this._dockSig = null;
     this.buildDock();
     this.updateDockSelection();
     this.refreshDockAffordability();
@@ -1018,7 +1076,8 @@ class Game {
       skill: Math.floor(this.skill),
       levels: this.tech.levels,
       selected: this.selected,
-      launches: this.launches,
+      demand: this.demand,
+      demandAt: Date.now(),
       stats: this.stats,
       total: this.world.total,
       field: null,
@@ -1057,7 +1116,8 @@ class Game {
       skill: Math.floor(this.skill),
       levels: this.tech.levels,
       selected: this.selected,
-      launches: {},
+      demand: {},
+      demandAt: Date.now(),
       stats: { shots: 0, kills: 0, earned: 0, shards: 0 },
       total: 0,
       field: null,

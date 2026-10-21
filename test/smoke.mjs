@@ -21,6 +21,44 @@ const evalIn = (code) => vm.runInContext(code, ctx);
 const CFG = evalIn('CFG');
 const BALL_TYPES = evalIn('BALL_TYPES');
 const BALL_BY_ID = evalIn('BALL_BY_ID');
+const PRICING = evalIn('PRICING');
+const ballPrice = evalIn('ballPrice');
+
+/* --------------------------------------------------------------- pricing */
+
+{
+  assert.strictEqual(ballPrice(10, 1, 0), 10, 'base price without demand');
+  assert.strictEqual(ballPrice(10, 1, 1), 12, 'one launch adds 20%');
+  assert.strictEqual(ballPrice(10, 1, -5), 10, 'demand cannot go negative');
+  const capped = ballPrice(10, 1, PRICING.cap);
+  assert.strictEqual(capped, 26, 'surcharge is capped at 2.6x');
+  assert.strictEqual(ballPrice(10, 1, PRICING.cap * 10), capped, 'demand clamps to the cap');
+  assert.strictEqual(ballPrice(10, 0.88, 0), 9, 'cost multiplier still applies');
+  let demand = 0;
+  for (let i = 0; i < 40; i++) demand = Math.min(PRICING.cap, demand + PRICING.gain);
+  assert.strictEqual(ballPrice(700, 1, demand), 1820, 'repeated launches never exceed 2.6x');
+}
+
+/* ------------------------------------------------------- roster + trees */
+
+{
+  const TECH_NODES = evalIn('TECH_NODES');
+  assert.strictEqual(BALL_TYPES.length, 3, 'exactly three standard balls');
+  assert.strictEqual(BALL_TYPES.map(b => b.id).join(','), 'arc,maul,drift');
+  for (const ball of BALL_TYPES) {
+    const tree = TECH_NODES.filter(n => n.tree === ball.id);
+    assert.ok(tree.length >= 10, `${ball.name} needs an expansive tree`);
+    assert.ok(tree.some(n => n.kind === 'ball' && n.ball === ball.id), `${ball.name} has a root node`);
+  }
+  const ids = new Set(TECH_NODES.map(n => n.id));
+  assert.strictEqual(ids.size, TECH_NODES.length, 'tech node ids must be unique');
+  for (const node of TECH_NODES) {
+    assert.ok(!/_size$|_reload$/.test(node.id), `obsolete node ${node.id}`);
+    for (const req of node.req) {
+      assert.ok(ids.has(req.id), `${node.id} requires missing ${req.id}`);
+    }
+  }
+}
 
 /* ------------------------------------------------------------------ world */
 
@@ -64,7 +102,28 @@ for (let y = half - CFG.FREE_R; y <= half + CFG.FREE_R; y++) {
   }
 }
 
+// launch sites: only cleared ground, never fog or a solid pixel
+assert.strictEqual(world.isCleared(half, half), true, 'start arena is cleared ground');
+assert.strictEqual(world.isCleared(512, half), false, 'solid pixels are not launch sites');
+assert.strictEqual(world.isCleared(-1, 0), false, 'outside the field is not cleared');
+assert.strictEqual(world.isCleared(CFG.GRID, 0), false, 'outside the field is not cleared');
+{
+  let hidden = null;
+  for (let y = 100; y < 900 && !hidden; y += 13) {
+    for (let x = 100; x < 900; x += 13) {
+      const i = y * 1000 + x;
+      if (world.health[i] !== 0 && world.wall[i] === 0 && world.visible[i] === 0) {
+        hidden = { x, y };
+        break;
+      }
+    }
+  }
+  assert.ok(hidden, 'expected hidden solid pixels');
+  assert.strictEqual(world.isCleared(hidden.x, hidden.y), false, 'fog is not a launch site');
+}
+
 // health bounds + shard cells
+assert.strictEqual(CFG.MAX_HEALTH, 20, 'pixels now reach 20 health');
 for (let i = 0; i < world.w; i++) {
   const h = world.health[i];
   if (h !== 0) assert.ok(h >= 1 && h <= CFG.MAX_HEALTH, `bad health ${h}`);
@@ -74,6 +133,25 @@ for (let i = 0; i < world.w; i++) {
   }
 }
 assert.strictEqual(new Set(world.shards.map(s => s.i)).size, world.shards.length, 'shards unique');
+
+// health rises towards the edges of the field
+{
+  let coreSum = 0;
+  let coreN = 0;
+  let edgeSum = 0;
+  let edgeN = 0;
+  for (let y = 0; y < 1000; y += 9) {
+    for (let x = 0; x < 1000; x += 9) {
+      const i = y * 1000 + x;
+      if (world.health[i] === 0 || world.wall[i]) continue;
+      const d = Math.hypot(x - half, y - half);
+      if (d < 120) { coreSum += world.health[i]; coreN++; }
+      else if (d > 430) { edgeSum += world.health[i]; edgeN++; }
+    }
+  }
+  assert.ok(coreN > 0 && edgeN > 0, 'sampled both core and edge pixels');
+  assert.ok(edgeSum / edgeN > coreSum / coreN + 6, 'edge pixels are much tougher than core pixels');
+}
 
 // connectivity: every breakable cell reachable from the centre
 {
@@ -99,6 +177,33 @@ assert.strictEqual(new Set(world.shards.map(s => s.i)).size, world.shards.length
     if (!seen[i] && !world.wall[i]) orphans++;
   }
   assert.strictEqual(orphans, 0, `steel sealed off ${orphans} pixels`);
+}
+
+// the steel web must never enclose a region, regardless of seed
+for (const seed of [7, 987654]) {
+  const w = evalIn(`new World(${seed})`);
+  const n = w.n;
+  const seen = new Uint8Array(w.w);
+  const q = new Int32Array(w.w);
+  let head = 0;
+  let tail = 0;
+  const start = (n >> 1) * n + (n >> 1);
+  seen[start] = 1;
+  q[tail++] = start;
+  while (head < tail) {
+    const i = q[head++];
+    const x = i % n;
+    const y = (i / n) | 0;
+    if (x > 0) { const j = i - 1; if (!seen[j] && !w.wall[j]) { seen[j] = 1; q[tail++] = j; } }
+    if (x < n - 1) { const j = i + 1; if (!seen[j] && !w.wall[j]) { seen[j] = 1; q[tail++] = j; } }
+    if (y > 0) { const j = i - n; if (!seen[j] && !w.wall[j]) { seen[j] = 1; q[tail++] = j; } }
+    if (y < n - 1) { const j = i + n; if (!seen[j] && !w.wall[j]) { seen[j] = 1; q[tail++] = j; } }
+  }
+  let orphans = 0;
+  for (let i = 0; i < w.w; i++) {
+    if (!seen[i] && !w.wall[i]) orphans++;
+  }
+  assert.strictEqual(orphans, 0, `seed ${seed}: steel sealed off ${orphans} pixels`);
 }
 
 /* -------------------------------------------------------- fog of war (3) */
@@ -160,6 +265,7 @@ function anyEmptyWithin3(x, y) {
   const r = world.damageAt(fx, fy, 99);
   assert.ok(r === 2 || r === 4);
   assert.strictEqual(world.remaining, before - 1);
+  assert.strictEqual(world.isCleared(fx, fy), true, 'a destroyed pixel becomes cleared ground');
   // every solid within 3 must now be visible
   for (let dy = -3; dy <= 3; dy++) {
     for (let dx = -3; dx <= 3; dx++) {
@@ -262,14 +368,15 @@ function anyEmptyWithin3(x, y) {
     onImpactBlast() { this.blasts++; },
   };
   const balls = new (evalIn('BallSystem'))(world, stub);
-  const def = BALL_BY_ID.spark;
+  const def = BALL_BY_ID.arc;
 
   // first solid pixel east of the arena
   const ray = world.raycast(CFG.HALF, CFG.HALF, 1, 0, 4000);
   assert.ok(ray.hit || ray.unknown);
   const before = world.remaining;
-  balls.fire(def, CFG.HALF, CFG.HALF, 0, 1);
+  balls.fire(def, CFG.HALF, CFG.HALF, 0);
   assert.strictEqual(balls.count, 1);
+  assert.strictEqual(balls.list[0].baseSpeed, def.speed, 'every launch uses the ball\'s fixed speed');
   for (let i = 0; i < 600; i++) balls.update(1 / 60);
   assert.strictEqual(balls.count, 1, 'ball ricochets forever');
   assert.ok(world.remaining < before, 'ball destroyed at least one pixel');
@@ -340,6 +447,31 @@ function anyEmptyWithin3(x, y) {
   for (let i = 0; i < 500; i++) balls.update(1 / 60);
   assert.strictEqual(stub.explosions, 1, 'mortar detonates exactly once');
   assert.strictEqual(balls.count, 1, 'mortar keeps ricocheting after detonating');
+
+  // Upgrades rebase a live ball without erasing its in-flight growth.
+  balls.list.length = 0;
+  const liveBall = balls.fire(BALL_BY_ID.arc, CFG.HALF, CFG.HALF, 0);
+  liveBall.damage = 3;
+  liveBall.baseDamage = 1;
+  liveBall.r = 6;
+  liveBall.baseRadius = 5;
+  liveBall.baseSpeed = 396;
+  liveBall.speed0 = 330;
+  balls.applyStats(liveBall, {
+    damage: 2, speed: 360, radius: 5,
+    pierce: 2, pierceEvery: 2, pierceCap: 5,
+    explode: 0, explodeDmg: 0, split: 0, ramp: 0, rampSize: 0,
+    charge: 0, chargeCap: 1, streakEvery: 10, streakDamage: 1,
+    splash: 0, splashCap: 0, splashGrow: 0, splashDiag: false,
+    impactR: 0, impactDmg: 1, pulseEvery: 0, pulseR: 0, pulseDmg: 0,
+    spawnEvery: 0, spawnCount: 0, pulseSpawn: 0, harvestEvery: 0,
+    fragBonus: 0, streakPierce: 0, crushBlast: 0, crushBlastDmg: 1,
+    chargeOnSteel: 0, pierceCharge: 0,
+  });
+  assert.strictEqual(liveBall.damage, 4, 'live ball keeps earned damage on upgrade');
+  assert.strictEqual(liveBall.r, 6, 'live ball keeps earned radius on upgrade');
+  assert.ok(Math.abs(liveBall.baseSpeed - 432) < 1e-9, 'speed upgrade reaches a live ball');
+  assert.strictEqual(liveBall.pierceCap, 5, 'pierce cap upgrade reaches a live ball');
 }
 
 /* --------------------------------------------------------------- restore */

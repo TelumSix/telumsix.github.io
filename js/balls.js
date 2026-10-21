@@ -39,6 +39,7 @@ class BallSystem {
     b.baseRadius = o.r;
     b.radiusCap = o.radiusCap || o.r * 1.5;
     b.damage = o.damage;
+    b.baseDamage = o.damage;
     b.damageCap = o.damageCap == null ? Infinity : o.damageCap;
     b.ramp = o.ramp || 0;
     b.rampSize = o.rampSize || 0;
@@ -53,6 +54,11 @@ class BallSystem {
     b.chargeCap = o.chargeCap || 1;
     b.streakEvery = o.streakEvery || 16;
     b.splash = o.splash || 0;
+    b.baseSplash = o.splash || 0;
+    b.splashCap = o.splashCap == null ? (o.splash || 0) : o.splashCap;
+    b.splashGrow = o.splashGrow || 0;
+    b.crushBlast = o.crushBlast || 0;
+    b.crushBlastDmg = o.crushBlastDmg || 1;
     b.pulseEvery = o.pulseEvery || 0;
     b.pulseR = o.pulseR || 0;
     b.pulseDmg = o.pulseDmg || 0;
@@ -62,6 +68,9 @@ class BallSystem {
     b.pierceCap = o.pierceCap || 0;
     b.streakDamage = o.streakDamage || 1;
     b.splashDiag = !!o.splashDiag;
+    b.streakPierce = o.streakPierce || 0;
+    b.fragBonus = o.fragBonus || 0;
+    b.pierceCharge = o.pierceCharge || 0;
     b.chargeOnSteel = o.chargeOnSteel || 0;
     b.pulseSpawn = o.pulseSpawn || 0;
     b.harvestEvery = o.harvestEvery || 0;
@@ -79,18 +88,26 @@ class BallSystem {
     return b;
   }
 
-  fire(def, x, y, angle, power) {
+  radiusCapFor(s) {
+    return s.radius * (s.ramp > 0 ? 1.9 : 1.5);
+  }
+
+  damageCapFor(s) {
+    return s.damage + 8 + (s.ramp > 0 ? 10 : 0);
+  }
+
+  fire(def, x, y, angle) {
     const s = this.game.ballStats(def);
-    const speed = s.speed * power;
+    const speed = s.speed;
     return this.spawnRaw({
       id: def.id,
       x, y,
       vx: Math.cos(angle) * speed,
       vy: Math.sin(angle) * speed,
       r: s.radius,
-      radiusCap: s.radius * (s.ramp > 0 ? 1.9 : 1.5),
+      radiusCap: this.radiusCapFor(s),
       damage: s.damage,
-      damageCap: s.damage + 8 + (s.ramp > 0 ? 10 : 0),
+      damageCap: this.damageCapFor(s),
       ramp: s.ramp,
       rampSize: s.rampSize,
       color: def.color,
@@ -106,6 +123,10 @@ class BallSystem {
       chargeCap: s.chargeCap,
       streakEvery: s.streakEvery,
       splash: s.splash,
+      splashCap: s.splashCap,
+      splashGrow: s.splashGrow,
+      crushBlast: s.crushBlast,
+      crushBlastDmg: s.crushBlastDmg,
       pulseEvery: s.pulseEvery,
       pulseR: s.pulseR,
       pulseDmg: s.pulseDmg,
@@ -113,10 +134,85 @@ class BallSystem {
       spawnCount: s.spawnCount,
       streakDamage: s.streakDamage,
       splashDiag: s.splashDiag,
+      streakPierce: s.streakPierce,
+      fragBonus: s.fragBonus,
+      pierceCharge: s.pierceCharge,
       chargeOnSteel: s.chargeOnSteel,
       pulseSpawn: s.pulseSpawn,
       harvestEvery: s.harvestEvery,
     });
+  }
+
+  /** Re-applies the current tech to every ball already in flight. */
+  applyUpgrades() {
+    for (const b of this.list) {
+      const def = BALL_BY_ID[b.id];
+      if (!def) continue;
+      this.applyStats(b, this.game.ballStats(def));
+    }
+  }
+
+  /**
+   * Rebase a live ball onto new stats without losing what it earned in flight:
+   * streak/ramp damage and radius growth are kept, and speed is scaled by the
+   * same ratio the ball had already wound itself up to.
+   */
+  applyStats(b, s) {
+    const damageGrowth = b.baseDamage == null ? 0 : Math.max(0, b.damage - b.baseDamage);
+    b.baseDamage = s.damage;
+    b.damageCap = this.damageCapFor(s);
+    b.damage = Math.min(b.damageCap, s.damage + damageGrowth);
+    b.ramp = s.ramp;
+    b.rampSize = s.rampSize;
+
+    const radiusRatio = b.baseRadius > 0 ? b.r / b.baseRadius : 1;
+    b.baseRadius = s.radius;
+    b.radiusCap = this.radiusCapFor(s);
+    b.r = Math.min(b.radiusCap, s.radius * radiusRatio);
+
+    const speedRatio = b.speed0 > 0 ? b.baseSpeed / b.speed0 : 1;
+    const oldBase = b.baseSpeed;
+    b.speed0 = s.speed;
+    b.baseSpeed = s.speed * speedRatio;
+    if (oldBase > 0) {
+      const k = b.baseSpeed / oldBase;
+      b.vx *= k;
+      b.vy *= k;
+    }
+
+    b.charge = s.charge;
+    b.chargeCap = s.chargeCap;
+    b.chargeOnSteel = s.chargeOnSteel;
+    b.pierceEvery = s.pierceEvery;
+    b.pierceCap = s.pierceCap;
+    b.pierce = Math.min(b.pierce, b.pierceCap);
+    b.pierceCharge = s.pierceCharge;
+    b.explode = s.explode;
+    b.explodeDmg = s.explodeDmg;
+    b.split = s.split;
+    b.impactR = s.impactR;
+    b.impactDmg = s.impactDmg;
+    b.streakEvery = s.streakEvery;
+    b.streakPierce = s.streakPierce;
+
+    const splashGrowth = Math.max(0, b.splash - (b.baseSplash == null ? b.splash : b.baseSplash));
+    b.baseSplash = s.splash;
+    b.splashGrow = s.splashGrow;
+    b.splashCap = s.splashCap;
+    b.splash = Math.min(b.splashCap, s.splash + splashGrowth);
+    b.crushBlast = s.crushBlast;
+    b.crushBlastDmg = s.crushBlastDmg;
+    b.splashDiag = s.splashDiag;
+
+    b.pulseEvery = s.pulseEvery;
+    b.pulseR = s.pulseR;
+    b.pulseDmg = s.pulseDmg;
+    b.spawnEvery = s.spawnEvery;
+    b.spawnCount = s.spawnCount;
+    b.streakDamage = s.streakDamage;
+    b.fragBonus = s.fragBonus;
+    b.pulseSpawn = s.pulseSpawn;
+    b.harvestEvery = s.harvestEvery;
   }
 
   remove(i) {
@@ -237,6 +333,13 @@ class BallSystem {
         if (b.pierce > 0) {
           b.pierce--;
           b.hitCells.add(idx);
+          if (b.pierceCharge > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
+            const next = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.pierceCharge));
+            const k = next / b.baseSpeed;
+            b.baseSpeed = next;
+            b.vx *= k;
+            b.vy *= k;
+          }
           return;
         }
 
@@ -260,7 +363,7 @@ class BallSystem {
     b.x += nx * (pen + 0.6);
     b.y += ny * (pen + 0.6);
 
-    // Rubber: every ricochet winds the ball up a little tighter.
+    // Elasticity: every ricochet winds the ball up a little tighter.
     if (b.charge > 0 && b.baseSpeed < b.speed0 * b.chargeCap) {
       b.baseSpeed = Math.min(b.speed0 * b.chargeCap, b.baseSpeed * (1 + b.charge));
     }
@@ -274,27 +377,38 @@ class BallSystem {
 
     b.bounces++;
 
-    // Slug: the impact crushes the pixels around the one it hit.
-    if (b.splash > 0) this.crush(cx, cy, b.splash, b.splashDiag);
+    // Heavy rounds crush the pixels around the one they hit; Aftershock makes
+    // that crush grow with every bounce.
+    if (b.splashGrow > 0 && b.splash < b.splashCap) b.splash += b.splashGrow;
+    if (b.splash > 0) {
+      this.crush(cx, cy, b.splash, b.splashDiag);
+      if (b.crushBlast > 0) {
+        const hits = this.world.explode(b.x, b.y, b.crushBlast, b.crushBlastDmg);
+        if (hits > 0) this.game.onImpactBlast(b.x, b.y, b.crushBlast, b.color);
+      }
+    }
 
-    // Ricochet: each pair of bounces teaches the ball to pierce.
+    // Pierce growth: bounce counters teach the ball to pierce.
     if (b.pierceEvery > 0 && b.bounces % b.pierceEvery === 0 && b.pierce < b.pierceCap) {
       b.pierce = Math.min(b.pierceCap, b.pierce + 1);
     }
 
-    // Echo / Nova: a shockwave every few bounces.
+    // Pulse: a shockwave every few bounces.
     if (b.pulseEvery > 0 && b.bounces % b.pulseEvery === 0) {
       this.pulse(b);
       if (b.pulseSpawn > 0) this.spawnFrags(b, b.pulseSpawn);
     }
 
-    // Spore: sheds bouncing sparks.
+    // Spawner: sheds bouncing sparks.
     if (b.spawnEvery > 0 && b.bounces % b.spawnEvery === 0) this.spawnFrags(b, b.spawnCount);
 
     // Bounce streak: long-lived ricochets grow stronger and slightly bigger.
     if (b.bounces % b.streakEvery === 0) {
       if (b.damage < b.damageCap) b.damage = Math.min(b.damageCap, b.damage + b.streakDamage);
       b.r = Math.min(b.radiusCap, b.r + b.baseRadius * 0.02);
+      if (b.streakPierce > 0 && b.pierce < b.pierceCap) {
+        b.pierce = Math.min(b.pierceCap, b.pierce + b.streakPierce);
+      }
       this.game.sfx.bounce(b.bounces);
     }
 
@@ -334,7 +448,7 @@ class BallSystem {
     const speed = b.baseSpeed * 0.92;
     const base = Math.atan2(b.vy, b.vx);
     const r = Math.max(2.2, b.baseRadius * 0.55);
-    const dmg = Math.max(1, Math.round(b.damage * 0.5));
+    const dmg = Math.max(1, Math.round(b.damage * 0.5 + b.fragBonus));
     for (let i = 0; i < count; i++) {
       const a = base + (i - (count - 1) / 2) * 0.5 + (Math.random() - 0.5) * 0.24;
       this.spawnRaw({

@@ -164,7 +164,7 @@ class Sfx {
 
   shoot(def) {
     if (!this.enabled) return;
-    const base = def.id === 'nova' ? 180 : def.id === 'driller' ? 900 : def.id === 'lance' ? 720 : 520;
+    const base = def.id === 'maul' ? 180 : def.id === 'drift' ? 760 : 520;
     this.tone(base, 0.09, 'triangle', 0.045, base * 0.4, 'fx');
     this.noise(0.05, 0.02, 2400, 700);
   }

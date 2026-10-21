@@ -89,13 +89,13 @@
         </div>
       </div>
       <div class="tabs">
-        <button class="tab active" data-tree="arsenal">Arsenal</button>
-        <button class="tab" data-tree="upgrades">Upgrades</button>
-        <button class="tab" data-tree="balls">Ball Upgrades</button>
+        <button class="tab active" data-tree="arc">Arc</button>
+        <button class="tab" data-tree="maul">Maul</button>
+        <button class="tab" data-tree="drift">Drift</button>
+        <button class="tab" data-tree="field">Field</button>
       </div>
       <div class="tree-wrap" id="treeWrap"><canvas id="treeCanvas"></canvas></div>
-      <div id="ballUpgrades" class="ball-upgrades hidden"></div>
-      <div class="tree-info" id="treeInfo"><span class="muted">Hover a node to inspect it · click to purchase · click an owned ball to equip it.</span></div>
+      <div class="tree-info" id="treeInfo"><span class="muted">Hover a node to inspect it · click to purchase · click a ball's root node to equip it.</span></div>
     </div>
   </div>
 
@@ -108,28 +108,28 @@
       <div class="help-grid">
         <section>
           <h3>Shooting</h3>
-          <p><b>Sling it.</b> Press anywhere, then drag <b>away</b> from where you want the ball to fly — like pulling back a slingshot. The ball spawns where you pressed and launches in the <b>opposite</b> direction on release. Longer pull = faster ball.</p>
+          <p><b>Sling it.</b> Press on <b>cleared ground</b> (never fog or a solid pixel), then drag <b>away</b> from where you want the ball to fly — like pulling back a slingshot. The ball spawns where you pressed and launches in the <b>opposite</b> direction on release. The drag only sets the <b>direction</b>: every ball always leaves at its own fixed speed, improved by its speed upgrades. You can still fire <b>into</b> the dark from cleared ground.</p>
           <p><b>Balls never stop.</b> Every round ricochets off pixels and steel forever, damaging whatever it touches. Long streaks add damage and size. The field fills up: late in a run there can be thousands of balls in flight.</p>
-          <p><b>Every unlocked ball has its own upgrade track</b> in the <b>Ball Upgrades</b> tab — damage, speed, size and a signature that plays into its bounce: quicker streaks, faster wind-up, harder crush, wider shockwave, more pierce or extra sparks. Shared upgrades live in the <b>Upgrades</b> tab.</p>
+          <p><b>Three standard balls — Arc, Maul and Drift — are available from the start.</b> Each has its own skill tree in the tech panel, while <b>Field</b> holds shared economy and power upgrades. Trees mix damage and speed with real playstyle changes: chain sparks, growing crushes, pierce-driven speed and synergies that combine two branches. Size and reload upgrades are gone. Purchases apply immediately, including to balls already in flight.</p>
           <p><b>Right-drag</b> or <b>WASD</b> pans the camera. <b>Wheel</b> zooms at the cursor. Click the field map to jump.</p>
-          <p><b>1–9</b> selects a ball. <b>T</b> opens the tech tree. <b>M</b> mutes. Click <b>♪</b> for master / effects / chime volume.</p>
+          <p><b>1–3</b> selects a ball. <b>T</b> opens the tech tree. <b>M</b> mutes. Click <b>♪</b> for master / effects / chime volume.</p>
         </section>
         <section>
           <h3>The field</h3>
-          <p>One million pixel cells, each <b>five ball-diameters</b> wide. Fresh pixels are grey; damage heats them yellow → orange → red. Steel is white.</p>
+          <p>One million pixel cells, each <b>five ball-diameters</b> wide. Fresh pixels are grey; damage heats them yellow → orange → red. Steel is white. Pixels near the starting arena are fragile; <b>health rises with distance from the centre</b>, up to 20 at the outer edges.</p>
           <p><b>Every cell is a pixel</b> except the small starting arena. Most are breakable; the steel ones are not.</p>
           <p><b>The dark hides the field.</b> A pixel only shows once a neighbouring pixel is broken — each impact reveals 3 pixels deep. Fog is pitch black; ground you have already cleared is a shade lighter. Your shots still collide with the dark, so every blind shot lights up its surroundings.</p>
-          <p><b>Steel pixels</b> are unbreakable and form one connected web: dashed arteries across the whole field, decorated with rings, wheels, ladders, combs, zigzags, polygons and gates. Every run stays reachable. They block and bounce shots, so dig around them. A <b>Bouncer</b> grows stronger and larger every time it hits steel.</p>
+          <p><b>Steel pixels</b> are unbreakable and form one connected web: dashed arteries across the whole field, decorated with rings, wheels, ladders, combs, zigzags, polygons and gates. They never enclose a region — every breakable pixel stays reachable, on every seed. They block and bounce shots, so dig around them. A <b>Maul</b> grows stronger and larger every time it hits steel.</p>
         </section>
         <section>
           <h3>Economy</h3>
-          <p>Destroying pixels earns <span class="gem">◆</span>, which pays for launching balls. Every ball has its own launch price and reload time, and <b>each launch makes that ball 1.5× pricier</b> — leaning on one ball gets expensive, so mix them up.</p>
+          <p>Destroying pixels earns <span class="gem">◆</span>, which pays for launching balls. Every ball has its own launch price and reload time. Each launch adds a <b>demand surcharge</b> (+20% of the base price, up to 2.6×), but it <b>cools while that ball rests</b> — spamming one ball briefly gets expensive, yet the price always settles back down. Switching balls or pacing your shots keeps launches cheap.</p>
           <p><b>Glowing shards</b> are always visible, even in the dark. Break one to earn <span class="star">✦</span> skill points and unlock tech. Far shards are worth more.</p>
         </section>
         <section>
           <h3>Damage colours</h3>
           <div class="legend" id="legend"></div>
-          <p class="muted small">Pixels start grey; the brighter and warmer they glow, the closer they are to breaking. One hit removes one health, and every ball has its own reload time.</p>
+          <p class="muted small">Pixels start grey; the brighter and warmer they glow, the closer they are to breaking. Each point of damage removes one health; tougher outer pixels take many more hits.</p>
         </section>
       </div>
       <div class="help-actions">

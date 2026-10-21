@@ -18,12 +18,12 @@ npm test         # world generation / fog / physics / save round-trip checks
 
 | Input | Action |
 | --- | --- |
-| Drag **backwards**, release | Sling a ball from where you pressed: it flies **opposite** the drag (longer pull = faster) |
+| Drag **backwards**, release | Sling a ball from **cleared ground**: it flies **opposite** the drag. The drag only aims — launch speed is fixed per ball |
 | Right-drag / middle-drag / Space+drag | Pan the camera |
 | WASD / arrow keys | Pan the camera |
 | Mouse wheel / field-map buttons | Zoom |
 | Click the field map | Jump the camera |
-| `1`–`9` | Select a ball |
+| `1`–`3` | Select a ball |
 | `T` | Tech tree |
 | `H` | Help |
 | `M` | Mute |
@@ -34,8 +34,9 @@ npm test         # world generation / fog / physics / save round-trip checks
 
 * A pixel is **five ball diameters** wide. The field is a 1000 × 1000 grid.
 * **Every cell is a pixel** except a small starting arena (~290 cells). Pixels are
-  either breakable (**grey**, health 1–10, heating yellow → orange → red as they
-  take damage) or **steel** (white).
+  either breakable (**grey**, health 1–20, heating yellow → orange → red as they
+  take damage) or **steel** (white). Health climbs with distance from the
+  starting arena: the centre is fragile, the outer edges are the toughest.
 * **Balls never stop.** Every round ricochets off pixels and steel forever,
   damaging whatever it touches. Every bounce feeds the ball's own gimmick and
   every few bounces the streak adds damage and size. Late in a run there can be
@@ -44,54 +45,55 @@ npm test         # world generation / fog / physics / save round-trip checks
   is broken; each break reveals a 3-pixel-deep band, and pixels still touching
   the fog are drawn a little darker. Ground you have already cleared is lit as a
   shade lighter than the fog, so you can read your tunnels at a glance.
+  Balls can only be launched from **cleared ground** — never from fog or from
+  inside a solid pixel — though a shot may fly straight into the dark.
 * **Steel** pixels are unbreakable and form one connected web: dashed arteries
   run across the whole field and are decorated with rings, wheels, ladders,
-  combs, zigzags, open polygons and gates. Every gap in the web keeps regions
-  reachable, and a connectivity pass carves the shortest possible exit out of
-  any pocket that a shape still seals off.
+  combs, zigzags, open polygons and gates. **Steel never encloses a region** —
+  a connectivity pass guarantees every breakable pixel stays reachable on every
+  seed, so no shape can seal off a pocket of the field.
 * **Shards** (gold gems) are always visible, even in the dark. They pay
   **skill points ✦** used by the tech tree. Shards further from the centre are
   worth more.
 * Destroying pixels pays **currency ◆**, which is what launching balls costs.
-  Every ball has its own reload time (shown as a bar on its dock card) and every
-  launch makes that ball **1.5× pricier**, so a swarm pays for itself while
-  spamming a single type gets expensive.
+  Every ball has its own reload time (shown as a bar on its dock card) and its
+  own **demand surcharge**: each launch adds +20% of the base price, and the
+  surcharge cools by 0.6 units/s while that ball rests, up to a 2.6× cap. Spam
+  one ball and it gets expensive for a moment; switch balls or pace your shots
+  and the price settles back down instead of growing forever.
 
 ## Balls
 
-Every ball is built around what happens when it bounces.
+The game starts with three standard rounds. All three are unlocked from the
+first launch, and each has its own expansive skill tree. Launch speed is fixed
+per ball type and never depends on how far you pull the sling; only the
+direction comes from the drag.
 
 | Ball | Ability |
 | --- | --- |
-| Spark | Cheap 1-damage ricochet, sharpens with every streak |
-| Rubber | +5% speed on every bounce (up to +70%) |
-| Slug | 3 damage per bounce plus a crush on the pixels around it |
-| Bouncer | +1 damage / +12% size each time it hits steel |
-| Bumper | Shockwave on every bounce instead of a single pixel |
-| Ricochet | Learns +1 pierce every second bounce |
-| Echo | Shockwave every third bounce |
-| Spore | Sheds two bouncing sparks every eighth bounce |
-| Nova | Five-pixel blast every tenth bounce |
+| **Arc** | Balanced energy round. Bounce streaks sharpen it, Chain Reaction sheds sparks and Resonance drops shockwaves. |
+| **Maul** | Slow heavy round. Every impact crushes nearby pixels, steel ramps its damage and size, and Blast Charge detonates on the first impact. |
+| **Drift** | Fast slim round. Winds up speed on every bounce, learns pierce, then sheds sparks and pulses. |
 
 ## Tech
 
-Three branches:
+Four trees share one panel:
 
-* **Arsenal** — unlocks the nine balls.
-* **Upgrades** — shared stats: damage, speed, radius, **momentum** (faster
-  bounce streaks), **kinetic edge** (bigger streak hits), **elastic field**
-  (every ball speeds up as it bounces), **kinetic harvest** (bounces pay
-  currency), **resonance field** (periodic shockwaves), **mitosis** (periodic
-  sparks), yield, reload speed, volley, discount and bounty.
-* **Ball Upgrades** — a six-chip per-ball track: Damage, Speed, Size, Reload,
-  signature and a second special. The signature differs per ball: Spark
-  quickens its streak, Rubber gains speed faster, Slug crushes harder, Bouncer
-  ramps harder on steel, Bumper and Echo widen their shockwaves, Ricochet raises
-  its pierce cap, Spore blooms more sparks, Nova widens its pulse. The special
-  adds another twist, from Chain sparks and Fracture crushes to Overwind speed
-  caps, Needle pierce, Feedback pulses and Chain Nova.
+* **Arc** — a balanced tree around streak damage, pierce, chain sparks and
+  shockwaves. **Momentum Pierce** makes every streak grant pierce;
+  **Conductor** makes chain sparks hit harder; **Overload** supercharges pulses.
+* **Maul** — a heavy tree around crush, shockwaves, steel ramp and detonation.
+  **Seismic Crush** adds a shockwave to every crush; **Aftershock** grows crush
+  damage with every bounce; **Quake** releases periodic shockwaves.
+* **Drift** — a speed/pierce tree. **Needle** pierces on every bounce,
+  **Elasticity** and **Kick** wind up speed, and **Phase Drive** turns pierce
+  hits into more speed.
+* **Field** — shared economy and power: damage, yield, discount, volley,
+  momentum, bounty, kinetic harvest, resonance field and mitosis. There are no
+  size or reload nodes.
 
-Nodes cost ✦, not ◆. Maxing everything costs roughly 220 skill points.
+Nodes cost ✦, not ◆. Purchased upgrades apply immediately, including to every
+ball already in flight.
 
 ## Sound
 
@@ -100,7 +102,7 @@ volume sliders; **M** mutes. Volumes and mute state persist.
 
 ## Performance notes
 
-* Health / steel / shard / visibility live in flat `Uint8Array`s (5 MB for the
+* Health / steel / shard / visibility live in flat `Uint8Array`s (6 MB for the
   whole million-pixel world).
 * Rendering is chunked: 40×40 cells per cached offscreen canvas, repainted only
   when dirty and only for chunks on screen. Fog is baked into the chunks.
